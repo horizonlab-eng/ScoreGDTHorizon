@@ -1,38 +1,36 @@
-Claude
-Build windows · YML
 # ScoreGDT – lizenzfreier Windows-Build für die Praxis
 # Baut aus dem unveränderten Original-Quellcode (retconx/scoregdt) eine
 # lauffähige Windows-Version. Die Lizenz-Abschnitte werden – wie im README
 # des Autors beschrieben – erst beim Bauen entfernt. Dadurch bleibt der
 # Fork jederzeit mit "Sync fork" aktualisierbar.
- 
-name: ScoreGDTHorizon
- 
+
+name: ScoreGDT Windows-Build
+
 on:
   workflow_dispatch:        # Start per Knopf "Run workflow"
   push:
     branches: [main]        # und automatisch nach jedem "Sync fork"
- 
+
 permissions:
   contents: write           # nötig, um das Release anzulegen
- 
+
 jobs:
   build:
     runs-on: windows-latest
     steps:
       - name: Quellcode holen
         uses: actions/checkout@v4
- 
+
       - name: Python einrichten
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
- 
+
       - name: Abhängigkeiten installieren
         run: |
           python -m pip install --upgrade pip
           pip install pyside6 fpdf2 requests pyinstaller
- 
+
       - name: Lizenz-Abschnitte entfernen und Praxis-Voreinstellungen setzen
         shell: python
         run: |
@@ -65,7 +63,7 @@ jobs:
           with open(os.environ["GITHUB_ENV"], "a") as f:
               f.write(f"SCOREGDT_VERSION={version}\n")
           print("Version:", version)
- 
+
       - name: Programm bauen (PyInstaller)
         run: >
           pyinstaller --noconfirm --windowed
@@ -80,11 +78,11 @@ jobs:
           --add-data "bilder;bilder"
           --add-data "pdf;pdf"
           main.py
- 
+
       - name: ZIP erstellen
         shell: pwsh
         run: Compress-Archive -Path dist/scoregdt/* -DestinationPath "ScoreGDT-$env:SCOREGDT_VERSION-praxis-win64.zip"
- 
+
       - name: Release veröffentlichen
         shell: pwsh
         env:
@@ -92,5 +90,3 @@ jobs:
         run: |
           $tag = "v$env:SCOREGDT_VERSION-praxis-$env:GITHUB_RUN_NUMBER"
           gh release create $tag "ScoreGDT-$env:SCOREGDT_VERSION-praxis-win64.zip" --title "ScoreGDT $env:SCOREGDT_VERSION (Praxis-Build $env:GITHUB_RUN_NUMBER)" --notes "Lizenzfreier Windows-Build aus dem Quellcode von retconx/scoregdt (Stand: Commit $env:GITHUB_SHA)."
- 
-Claude hat die Antwort abgeschlossen
