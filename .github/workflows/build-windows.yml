@@ -83,10 +83,64 @@ jobs:
         shell: pwsh
         run: Compress-Archive -Path dist/scoregdt/* -DestinationPath "ScoreGDT-$env:SCOREGDT_VERSION-praxis-win64.zip"
 
+      - name: Installer bauen (Inno Setup)
+        shell: pwsh
+        run: |
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) { choco install innosetup -y --no-progress }
+          if (-not (Test-Path $iscc)) { throw "Inno Setup wurde nicht gefunden" }
+          @'
+          #define MyVersion GetEnv("SCOREGDT_VERSION")
+
+          [Setup]
+          AppId={{6E2B8C41-3F7A-4D19-9B52-A1C7E0D4F823}
+          AppName=ScoreGDT (Praxis-Build)
+          AppVersion={#MyVersion}
+          AppPublisher=Quellcode: Fabian Treusch (gdttools.de)
+          DefaultDirName=C:\GDT\ScoreGDT
+          DisableProgramGroupPage=yes
+          DefaultGroupName=ScoreGDT
+          OutputDir=.
+          OutputBaseFilename=ScoreGDT-{#MyVersion}-praxis-Setup
+          SetupIconFile=icons\program.ico
+          UninstallDisplayIcon={app}\scoregdt.exe
+          UninstallDisplayName=ScoreGDT (Praxis-Build)
+          Compression=lzma2
+          SolidCompression=yes
+          ArchitecturesAllowed=x64compatible
+          ArchitecturesInstallIn64BitMode=x64compatible
+          PrivilegesRequired=admin
+          CloseApplications=yes
+
+          [Languages]
+          Name: "de"; MessagesFile: "compiler:Languages\German.isl"
+
+          [Tasks]
+          Name: "desktopicon"; Description: "Verknüpfung auf dem Desktop für alle Benutzer anlegen"
+
+          [Dirs]
+          Name: "{app}"; Permissions: users-modify
+          Name: "{app}\log"; Permissions: users-modify
+          Name: "{app}\pdf"; Permissions: users-modify
+
+          [Files]
+          Source: "dist\scoregdt\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+
+          [Icons]
+          Name: "{commonprograms}\ScoreGDT"; Filename: "{app}\scoregdt.exe"
+          Name: "{commondesktop}\ScoreGDT"; Filename: "{app}\scoregdt.exe"; Tasks: desktopicon
+
+          [UninstallDelete]
+          Type: filesandordirs; Name: "{app}\log"
+          Type: filesandordirs; Name: "{app}\pdf"
+          '@ | Set-Content -Path scoregdt.iss -Encoding utf8BOM
+          & $iscc scoregdt.iss
+          if ($LASTEXITCODE -ne 0) { throw "Installer-Bau fehlgeschlagen" }
+
       - name: Release veröffentlichen
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           $tag = "v$env:SCOREGDT_VERSION-praxis-$env:GITHUB_RUN_NUMBER"
-          gh release create $tag "ScoreGDT-$env:SCOREGDT_VERSION-praxis-win64.zip" --title "ScoreGDT $env:SCOREGDT_VERSION (Praxis-Build $env:GITHUB_RUN_NUMBER)" --notes "Lizenzfreier Windows-Build aus dem Quellcode von retconx/scoregdt (Stand: Commit $env:GITHUB_SHA)."
+          gh release create $tag "ScoreGDT-$env:SCOREGDT_VERSION-praxis-Setup.exe" "ScoreGDT-$env:SCOREGDT_VERSION-praxis-win64.zip" --title "ScoreGDT $env:SCOREGDT_VERSION (Praxis-Build $env:GITHUB_RUN_NUMBER)" --notes "Lizenzfreier Windows-Build aus dem Quellcode von retconx/scoregdt (Stand: Commit $env:GITHUB_SHA)."
