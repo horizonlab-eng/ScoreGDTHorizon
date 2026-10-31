@@ -1,0 +1,96 @@
+Claude
+Build windows · YML
+# ScoreGDT – lizenzfreier Windows-Build für die Praxis
+# Baut aus dem unveränderten Original-Quellcode (retconx/scoregdt) eine
+# lauffähige Windows-Version. Die Lizenz-Abschnitte werden – wie im README
+# des Autors beschrieben – erst beim Bauen entfernt. Dadurch bleibt der
+# Fork jederzeit mit "Sync fork" aktualisierbar.
+ 
+name: ScoreGDTHorizon
+ 
+on:
+  workflow_dispatch:        # Start per Knopf "Run workflow"
+  push:
+    branches: [main]        # und automatisch nach jedem "Sync fork"
+ 
+permissions:
+  contents: write           # nötig, um das Release anzulegen
+ 
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - name: Quellcode holen
+        uses: actions/checkout@v4
+ 
+      - name: Python einrichten
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+ 
+      - name: Abhängigkeiten installieren
+        run: |
+          python -m pip install --upgrade pip
+          pip install pyside6 fpdf2 requests pyinstaller
+ 
+      - name: Lizenz-Abschnitte entfernen und Praxis-Voreinstellungen setzen
+        shell: python
+        run: |
+          import re, pathlib, sys
+          dateien = ["main.py", "dialogEinstellungenLanrLizenzschluessel.py", "dialogEinstellungenImportExport.py"]
+          for name in dateien:
+              p = pathlib.Path(name)
+              zeilen, ueberspringen, entfernt = [], False, 0
+              for z in p.read_text(encoding="utf-8").splitlines(keepends=True):
+                  s = z.strip()
+                  if s == "## Nur mit Lizenz":
+                      ueberspringen = True; entfernt += 1; continue
+                  if s == "## /Nur mit Lizenz":
+                      ueberspringen = False; continue
+                  if not ueberspringen:
+                      zeilen.append(z)
+              if ueberspringen:
+                  sys.exit(f"FEHLER: Block in {name} nicht geschlossen")
+              p.write_text("".join(zeilen), encoding="utf-8")
+              print(f"{name}: {entfernt} Lizenz-Abschnitt(e) entfernt")
+          # Sicherheitsprüfung: main.py darf gdttoolsL nicht mehr verwenden
+          if "gdttoolsL" in pathlib.Path("main.py").read_text(encoding="utf-8"):
+              sys.exit("FEHLER: main.py verweist noch auf gdttoolsL – Autor hat den Code geändert, bitte prüfen")
+          # Automatische Update-Prüfung abschalten (würde auf die lizenzpflichtige Original-Version verweisen)
+          ini = pathlib.Path("config.ini")
+          text = re.sub(r"(?m)^autoupdate\s*=.*$", "autoupdate = False", ini.read_text(encoding="utf-8"))
+          ini.write_text(text, encoding="utf-8")
+          version = re.search(r"(?m)^version\s*=\s*(\S+)", text).group(1)
+          import os
+          with open(os.environ["GITHUB_ENV"], "a") as f:
+              f.write(f"SCOREGDT_VERSION={version}\n")
+          print("Version:", version)
+ 
+      - name: Programm bauen (PyInstaller)
+        run: >
+          pyinstaller --noconfirm --windowed
+          --name scoregdt
+          --contents-directory "."
+          --icon icons/program.ico
+          --add-data "config.ini;."
+          --add-data "eula.txt;."
+          --add-data "scores;scores"
+          --add-data "icons;icons"
+          --add-data "fonts;fonts"
+          --add-data "bilder;bilder"
+          --add-data "pdf;pdf"
+          main.py
+ 
+      - name: ZIP erstellen
+        shell: pwsh
+        run: Compress-Archive -Path dist/scoregdt/* -DestinationPath "ScoreGDT-$env:SCOREGDT_VERSION-praxis-win64.zip"
+ 
+      - name: Release veröffentlichen
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = "v$env:SCOREGDT_VERSION-praxis-$env:GITHUB_RUN_NUMBER"
+          gh release create $tag "ScoreGDT-$env:SCOREGDT_VERSION-praxis-win64.zip" --title "ScoreGDT $env:SCOREGDT_VERSION (Praxis-Build $env:GITHUB_RUN_NUMBER)" --notes "Lizenzfreier Windows-Build aus dem Quellcode von retconx/scoregdt (Stand: Commit $env:GITHUB_SHA)."
+ 
+Claude hat die Antwort abgeschlossen
