@@ -1,8 +1,8 @@
-# ScoreGDT – lizenzfreier Windows-Build für die Praxis
+# ScoreGDT – lizenzfreier Windows-Build für die Praxis am Horizont
 # Baut aus dem unveränderten Original-Quellcode (retconx/scoregdt) eine
-# lauffähige Windows-Version. Die Lizenz-Abschnitte werden – wie im README
-# des Autors beschrieben – erst beim Bauen entfernt. Dadurch bleibt der
-# Fork jederzeit mit "Sync fork" aktualisierbar.
+# lauffähige Windows-Version mit Installer und eigenem Updater.
+# Alle Anpassungen passieren erst beim Bauen. Die Dateien des Forks bleiben
+# unverändert, dadurch funktioniert "Sync fork" jederzeit.
 
 name: ScoreGDT Windows-Build
 
@@ -31,15 +31,32 @@ jobs:
           python -m pip install --upgrade pip
           pip install pyside6 fpdf2 requests pyinstaller
 
-      - name: Lizenz-Abschnitte entfernen und Praxis-Voreinstellungen setzen
+      - name: Praxis-Anpassungen einspielen
         shell: python
         run: |
-          import re, pathlib, sys
-          dateien = ["main.py", "dialogEinstellungenLanrLizenzschluessel.py", "dialogEinstellungenImportExport.py"]
-          for name in dateien:
-              p = pathlib.Path(name)
+          import re, os, sys, pathlib
+
+          def lesen(name):
+              return pathlib.Path(name).read_text(encoding="utf-8")
+
+          def schreiben(name, text):
+              pathlib.Path(name).write_text(text, encoding="utf-8")
+
+          def ersetzen(name, alt, neu, pflicht=True, beschreibung=""):
+              text = lesen(name)
+              anzahl = text.count(alt)
+              if anzahl == 0:
+                  if pflicht:
+                      sys.exit(f"FEHLER: {beschreibung} – Stelle in {name} nicht gefunden. Der Autor hat den Code geändert, bitte prüfen.")
+                  print(f"Hinweis: {beschreibung} – in {name} nicht (mehr) vorhanden, übersprungen")
+                  return
+              schreiben(name, text.replace(alt, neu))
+              print(f"OK: {beschreibung} ({anzahl}x in {name})")
+
+          # 1) Lizenz-Abschnitte entfernen (laut README des Autors)
+          for name in ["main.py", "dialogEinstellungenLanrLizenzschluessel.py", "dialogEinstellungenImportExport.py"]:
               zeilen, ueberspringen, entfernt = [], False, 0
-              for z in p.read_text(encoding="utf-8").splitlines(keepends=True):
+              for z in lesen(name).splitlines(keepends=True):
                   s = z.strip()
                   if s == "## Nur mit Lizenz":
                       ueberspringen = True; entfernt += 1; continue
@@ -48,21 +65,61 @@ jobs:
                   if not ueberspringen:
                       zeilen.append(z)
               if ueberspringen:
-                  sys.exit(f"FEHLER: Block in {name} nicht geschlossen")
-              p.write_text("".join(zeilen), encoding="utf-8")
-              print(f"{name}: {entfernt} Lizenz-Abschnitt(e) entfernt")
-          # Sicherheitsprüfung: main.py darf gdttoolsL nicht mehr verwenden
-          if "gdttoolsL" in pathlib.Path("main.py").read_text(encoding="utf-8"):
-              sys.exit("FEHLER: main.py verweist noch auf gdttoolsL – Autor hat den Code geändert, bitte prüfen")
-          # Automatische Update-Prüfung abschalten (würde auf die lizenzpflichtige Original-Version verweisen)
-          ini = pathlib.Path("config.ini")
-          text = re.sub(r"(?m)^autoupdate\s*=.*$", "autoupdate = False", ini.read_text(encoding="utf-8"))
-          ini.write_text(text, encoding="utf-8")
+                  sys.exit(f"FEHLER: Lizenz-Block in {name} nicht geschlossen")
+              schreiben(name, "".join(zeilen))
+              print(f"OK: {entfernt} Lizenz-Abschnitt(e) aus {name} entfernt")
+          if "gdttoolsL" in lesen("main.py"):
+              sys.exit("FEHLER: main.py verweist noch auf gdttoolsL – bitte prüfen")
+
+          # 2) Zentrale Einstellungen für alle Benutzer: C:\ProgramData\scoregdt
+          ersetzen("main.py",
+              'os.path.expanduser("~\\\\appdata\\\\local\\\\scoregdt")',
+              'os.path.join(os.environ.get("PROGRAMDATA", "C:\\\\ProgramData"), "scoregdt")',
+              beschreibung="Zentrale Einstellungen")
+
+          # 3) Rückschrieb: Ergebnis / Beurteilung / Kommentar+Kürzel als drei Zeilen
+          #    (medatixx hängt gleiche Feldnummern ohne Leerzeichen aneinander)
+          ersetzen("main.py",
+              '            if self.erfuellteAuswertungsregel != -1:\n'
+              '                gd.addZeile("6220", "Beurteilung: " + auswertung)\n'
+              '            gd.addZeile("6227", self.lineEditKommentar.text())\n'
+              '            gd.addZeile("6227", "Dokumentiert von: " + self.benutzerkuerzelListe[self.aktuelleBenutzernummer])\n',
+              '            if self.erfuellteAuswertungsregel != -1:\n'
+              '                gd.addZeile("6227", "Beurteilung: " + auswertung)\n'
+              '            praxisZeile = "Dokumentiert von: " + self.benutzerkuerzelListe[self.aktuelleBenutzernummer]\n'
+              '            if self.lineEditKommentar.text().strip() != "":\n'
+              '                praxisZeile = "Kommentar: " + self.lineEditKommentar.text().strip() + " \u2013 " + praxisZeile\n'
+              '            gd.addZeile("6228", praxisZeile)\n',
+              beschreibung="Rückschrieb-Format")
+
+          # 4) Kommazahlen: nur ein ",0" am Ende entfernen (vorher wurde aus 1,05 eine 15)
+          for name in ["main.py", "class_widgets.py"]:
+              ersetzen(name, '.replace(",0", "")', '.removesuffix(",0")', pflicht=False,
+                       beschreibung="Kommazahlen-Korrektur")
+
+          # 5) Uhrzeit: Sekunden immer zweistellig (vorher 14035 statt 140305)
+          ersetzen("main.py",
+              '+ str(jetzt.second())',
+              '+ "{:>02}".format(str(jetzt.second()))',
+              pflicht=False, beschreibung="Uhrzeit-Korrektur")
+
+          # 6) Platzhalter wie %USERNAME% in den GDT-Ordnern erlauben (vorbereitet)
+          for feld in ["gdtimportverzeichnis", "gdtexportverzeichnis"]:
+              ersetzen("main.py",
+                  f'= self.configIni["GDT"]["{feld}"]',
+                  f'= os.path.expandvars(self.configIni["GDT"]["{feld}"])',
+                  pflicht=False, beschreibung=f"Platzhalter in {feld}")
+
+          # 7) Automatische Update-Prüfung des Autors abschalten
+          text = re.sub(r"(?m)^autoupdate\s*=.*$", "autoupdate = False", lesen("config.ini"))
+          schreiben("config.ini", text)
+
+          # Versionskennung für Release und Updater
           version = re.search(r"(?m)^version\s*=\s*(\S+)", text).group(1)
-          import os
+          tag = f"v{version}-praxis-{os.environ['GITHUB_RUN_NUMBER']}"
           with open(os.environ["GITHUB_ENV"], "a") as f:
-              f.write(f"SCOREGDT_VERSION={version}\n")
-          print("Version:", version)
+              f.write(f"SCOREGDT_VERSION={version}\nSCOREGDT_TAG={tag}\n")
+          print("Version:", version, "| Build:", tag)
 
       - name: Programm bauen (PyInstaller)
         run: >
@@ -79,6 +136,79 @@ jobs:
           --add-data "pdf;pdf"
           main.py
 
+      - name: Updater und Build-Kennung beilegen
+        shell: pwsh
+        run: |
+          Set-Content -Path dist/scoregdt/build.txt -Value $env:SCOREGDT_TAG -Encoding ascii
+          @'
+          # ScoreGDT-Updater (Praxis-Build)
+          # Holt die neueste Version aus dem eigenen GitHub-Fork und installiert sie still.
+          #   Ohne Parameter : fragt vor der Installation nach (fuer den manuellen Start)
+          #   -Still         : ohne Rueckfragen (fuer die naechtliche Aufgabe)
+          param([switch]$Still, [switch]$AufgabeEinrichten, [switch]$AufgabeEntfernen)
+
+          $Repo     = 'horizonlab-eng/ScoreGDTHorizon'
+          $Aufgabe  = 'ScoreGDT Update'
+          $AppOrdner = Split-Path -Parent $PSCommandPath
+          $LogOrdner = Join-Path $env:ProgramData 'scoregdt'
+          $LogDatei  = Join-Path $LogOrdner 'update.log'
+
+          function Log([string]$Text) {
+              if (-not (Test-Path $LogOrdner)) { New-Item -ItemType Directory -Path $LogOrdner | Out-Null }
+              "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')  $Text" | Add-Content -Path $LogDatei
+              if (-not $Still) { Write-Host $Text }
+          }
+
+          if ($AufgabeEinrichten) {
+              if (Get-ScheduledTask -TaskName $Aufgabe -ErrorAction SilentlyContinue) { exit 0 }
+              $aktion  = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument "-NoProfile -ExecutionPolicy Bypass -File `"$PSCommandPath`" -Still"
+              $ausloeser = New-ScheduledTaskTrigger -Daily -At '03:00'
+              Register-ScheduledTask -TaskName $Aufgabe -Action $aktion -Trigger $ausloeser -User 'SYSTEM' -RunLevel Highest -Force | Out-Null
+              Log "Naechtliche Update-Aufgabe eingerichtet (03:00 Uhr)"
+              exit 0
+          }
+          if ($AufgabeEntfernen) {
+              Unregister-ScheduledTask -TaskName $Aufgabe -Confirm:$false -ErrorAction SilentlyContinue
+              exit 0
+          }
+
+          try {
+              [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+              $release = Invoke-RestMethod -Uri "https://api.github.com/repos/$Repo/releases/latest" -Headers @{ 'User-Agent' = 'ScoreGDT-Updater' } -UseBasicParsing
+              $neu = $release.tag_name
+              $buildDatei = Join-Path $AppOrdner 'build.txt'
+              $alt = ''
+              if (Test-Path $buildDatei) { $alt = (Get-Content $buildDatei -Raw).Trim() }
+
+              if ($neu -eq $alt) {
+                  Log "Keine neue Version (installiert: $alt)"
+              } else {
+                  $setup = $release.assets | Where-Object { $_.name -like '*-Setup.exe' } | Select-Object -First 1
+                  if (-not $setup) { throw "Im Release $neu wurde keine Setup-Datei gefunden" }
+                  $installieren = $true
+                  if (-not $Still) {
+                      $antwort = Read-Host "Neue Version $neu verfuegbar (installiert: $alt). Jetzt installieren? (j/n)"
+                      $installieren = ($antwort -eq 'j')
+                  }
+                  if ($installieren) {
+                      $ziel = Join-Path $env:TEMP $setup.name
+                      Log "Lade $($setup.name) herunter ..."
+                      Invoke-WebRequest -Uri $setup.browser_download_url -OutFile $ziel -UseBasicParsing
+                      Log "Installiere $neu (bisher: $alt) ..."
+                      $p = Start-Process -FilePath $ziel -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/CLOSEAPPLICATIONS' -Wait -PassThru
+                      Remove-Item $ziel -ErrorAction SilentlyContinue
+                      if ($p.ExitCode -ne 0) { throw "Setup endete mit Fehlercode $($p.ExitCode)" }
+                      Log "Update auf $neu erfolgreich"
+                  }
+              }
+          } catch {
+              Log "FEHLER: $_"
+              if (-not $Still) { Read-Host 'Enter zum Beenden' | Out-Null }
+              exit 1
+          }
+          if (-not $Still) { Read-Host 'Fertig. Enter zum Beenden' | Out-Null }
+          '@ | Set-Content -Path dist/scoregdt/ScoreGDT-Update.ps1 -Encoding utf8BOM
+
       - name: ZIP erstellen
         shell: pwsh
         run: Compress-Archive -Path dist/scoregdt/* -DestinationPath "ScoreGDT-$env:SCOREGDT_VERSION-praxis-win64.zip"
@@ -91,11 +221,12 @@ jobs:
           if (-not (Test-Path $iscc)) { throw "Inno Setup wurde nicht gefunden" }
           @'
           #define MyVersion GetEnv("SCOREGDT_VERSION")
+          #define MyBuild GetEnv("SCOREGDT_TAG")
 
           [Setup]
           AppId={{6E2B8C41-3F7A-4D19-9B52-A1C7E0D4F823}
           AppName=ScoreGDT (Praxis-Build)
-          AppVersion={#MyVersion}
+          AppVersion={#MyBuild}
           AppPublisher=Quellcode: Fabian Treusch (gdttools.de)
           DefaultDirName=C:\GDT\ScoreGDT
           DisableProgramGroupPage=yes
@@ -117,18 +248,28 @@ jobs:
 
           [Tasks]
           Name: "desktopicon"; Description: "Verknüpfung auf dem Desktop für alle Benutzer anlegen"
+          Name: "autoupdate"; Description: "Jede Nacht um 03:00 Uhr automatisch auf Updates prüfen und installieren"
 
           [Dirs]
           Name: "{app}"; Permissions: users-modify
           Name: "{app}\log"; Permissions: users-modify
           Name: "{app}\pdf"; Permissions: users-modify
+          Name: "{commonappdata}\scoregdt"; Permissions: users-modify; Flags: uninsneveruninstall
 
           [Files]
           Source: "dist\scoregdt\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
           [Icons]
           Name: "{commonprograms}\ScoreGDT"; Filename: "{app}\scoregdt.exe"
+          Name: "{commonprograms}\ScoreGDT aktualisieren"; Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\ScoreGDT-Update.ps1"""; IconFilename: "{app}\scoregdt.exe"
           Name: "{commondesktop}\ScoreGDT"; Filename: "{app}\scoregdt.exe"; Tasks: desktopicon
+
+          [Run]
+          Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\ScoreGDT-Update.ps1"" -AufgabeEinrichten"; Flags: runhidden; Tasks: autoupdate
+          Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\ScoreGDT-Update.ps1"" -AufgabeEntfernen"; Flags: runhidden; Tasks: not autoupdate
+
+          [UninstallRun]
+          Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\ScoreGDT-Update.ps1"" -AufgabeEntfernen"; Flags: runhidden; RunOnceId: "ScoreGDTUpdateEntfernen"
 
           [UninstallDelete]
           Type: filesandordirs; Name: "{app}\log"
@@ -142,5 +283,4 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          $tag = "v$env:SCOREGDT_VERSION-praxis-$env:GITHUB_RUN_NUMBER"
-          gh release create $tag "ScoreGDT-$env:SCOREGDT_VERSION-praxis-Setup.exe" "ScoreGDT-$env:SCOREGDT_VERSION-praxis-win64.zip" --title "ScoreGDT $env:SCOREGDT_VERSION (Praxis-Build $env:GITHUB_RUN_NUMBER)" --notes "Lizenzfreier Windows-Build aus dem Quellcode von retconx/scoregdt (Stand: Commit $env:GITHUB_SHA)."
+          gh release create $env:SCOREGDT_TAG "ScoreGDT-$env:SCOREGDT_VERSION-praxis-Setup.exe" "ScoreGDT-$env:SCOREGDT_VERSION-praxis-win64.zip" --title "ScoreGDT $env:SCOREGDT_VERSION (Praxis-Build $env:GITHUB_RUN_NUMBER)" --notes "Lizenzfreier Windows-Build aus dem Quellcode von retconx/scoregdt (Stand: Commit $env:GITHUB_SHA)."
