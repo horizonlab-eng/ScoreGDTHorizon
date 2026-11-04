@@ -3,7 +3,7 @@ import xml.etree.ElementTree as ElementTree
 import requests
 import gdt, gdtzeile, class_part, class_widgets, class_score, farbe
 import praxis
-import praxis_personen, praxisStartfenster, dialogPraxisRollen, praxis_pdf, dialogPraxisPdf
+import praxis_personen, praxisStartfenster, dialogPraxisRollen, praxis_pdf, dialogPraxisPdf, praxis_vorlage
 import dialogUeberScoreGdt, dialogEinstellungenAllgemein, dialogEinstellungenGdt, dialogEinstellungenBenutzer, dialogEinstellungenLanrLizenzschluessel, dialogEula, dialogEinstellungenImportExport, dialogScoreAuswahl, dialogEinstellungenFavoriten, dialogStartargumentGenerieren
 import class_trends, dialogTrendanzeige
 import class_enums, class_Rechenoperation, scorepdf
@@ -531,6 +531,25 @@ class MainWindow(QMainWindow):
                                         if test.getGruppe() not in gruppen:
                                             gruppen.append(test.getGruppe())
                                     gruppen.sort()
+                                    trendDetails = [] # Praxis: Tabelle "Details" für die Acrobat-Vorlage
+                                    for gruppe in gruppen:
+                                        trendDetails.append(("ueberschrift", gruppe))
+                                        for test in ausgewaehlteTests:
+                                            if test.getGruppe() == gruppe:
+                                                trendDetails.append(("unterueberschrift", test.getName()))
+                                                for trend in test.getLetzteTrends():
+                                                    trendDetails.append(("zeile", [trend.getTrend()["datum"].strftime("%d.%m.%Y"), trend.getTrend()["ergebnis"], trend.getTrend()["interpretation"]]))
+                                                trendDetails.append(("abstand",))
+                                    trendDaten = {
+                                        "Titel": "Medizinische Score-Trends" if len(ausgewaehlteTests) > 1 else "Medizinischer Score-Trend",
+                                        "Patient": self.name, "Geburtsdatum": self.geburtsdatum, "Datum": heute.strftime("%d.%m.%Y"),
+                                        "DokumentiertVon": self.praxisDokumentiertVon(),
+                                        "Einrichtung": self.einrichtungsname if self.einrichtunguebernehmen else "",
+                                    }
+                                    def trendPdfSpeichern(pfad):
+                                        if praxis_vorlage.vorhanden("verlauf"):
+                                            return praxis_vorlage.erzeugen("verlauf", trendDaten, trendDetails, pfad)
+                                        return praxis.pdfSpeichern(trendPdf, pfad)
                                     for gruppe in gruppen:
                                         trendPdf.set_font("dejavu", "B", 12)
                                         trendPdf.cell(0, 10, gruppe, fill=True, new_x="LMARGIN", new_y="NEXT")
@@ -551,13 +570,13 @@ class MainWindow(QMainWindow):
                                         # Praxis: nur ansehen/drucken - PDF im PDF-Programm öffnen, nichts an medatixx
                                         import tempfile
                                         ansichtPfad = os.path.join(tempfile.gettempdir(), os.path.basename(trendPdfPfad))
-                                        if praxis.pdfSpeichern(trendPdf, ansichtPfad):
+                                        if trendPdfSpeichern(ansichtPfad):
                                             try:
                                                 os.startfile(ansichtPfad) # type: ignore
                                             except Exception as e:
                                                 QMessageBox(QMessageBox.Icon.Warning, "Hinweis von ScoreGDT", "Das PDF wurde erstellt, konnte aber nicht geöffnet werden:\n" + ansichtPfad + "\n" + str(e), QMessageBox.StandardButton.Ok).exec()
                                     # Praxis: erst das PDF vollständig ablegen, danach die GDT-Datei
-                                    elif not praxis.pdfSpeichern(trendPdf, trendPdfPfad):
+                                    elif not trendPdfSpeichern(trendPdfPfad):
                                         QMessageBox(QMessageBox.Icon.Warning, "Hinweis von ScoreGDT", "Das PDF konnte nicht erstellt werden. Es wurde nichts an das Praxisverwaltungssystem gesendet.", QMessageBox.StandardButton.Ok).exec()
                                     # GDT-Datei exportieren
                                     elif not praxis.gdtSpeichern(gd, praxis.rueckschriebPfad(self.gdtExportVerzeichnis, self.kuerzelpraxisedv + self.kuerzelscoregdt, self.rueckschriebMitZeitstempel), self.zeichensatz):
@@ -1683,6 +1702,16 @@ class MainWindow(QMainWindow):
     def comboBoxBenutzerIndexChanged(self, index):
         self.aktuelleBenutzernummer = index
 
+    def praxisDokumentiertVon(self) -> str:
+        """Praxis: "Name (Kürzel)" der dokumentierenden Person für die PDF-Vorlage."""
+        try:
+            nr = self.aktuelleBenutzernummer
+            name = self.benutzernamenListe[nr] if nr < len(self.benutzernamenListe) else ""
+            kuerzel = self.benutzerkuerzelListe[nr] if nr < len(self.benutzerkuerzelListe) else ""
+            return (name + (" (" + kuerzel + ")" if kuerzel else "")).strip()
+        except Exception:
+            return ""
+
     def fuerGdtBereinigen(self, string:str):
         """
         Ersetzt GDT-unlesbare Unicodezeichen
@@ -1752,6 +1781,7 @@ class MainWindow(QMainWindow):
                 
             # Tests
             testzeilen = 0
+            vorlageZeilen = [] # Praxis: Tabelle "Details" für die Acrobat-Vorlage
             if str(self.scoreRoot.get("keineTestuebermittlung")) != "True": # type: ignore
                 i = 0
                 for widget in self.widgets:
@@ -1784,6 +1814,8 @@ class MainWindow(QMainWindow):
                         test = gdt.GdtTest("ScoreGDT" + "_" + widget.getId(), self.fuerGdtBereinigen(partTitel + widget.getTitel()), widget.getWert().replace(".", ",").removesuffix(",0"), self.fuerGdtBereinigen(widget.getEinheit())) # type: ignore
                     if test != None:
                         gd.addTest(test)
+                        if len(self.pdfZeilen) == 0:
+                            vorlageZeilen.append(("zeile", [test.getTest()["8411_testBezeichnung"], (test.getTest()["8420_testErgebnis"] + " " + test.getTest()["8421_testEinheit"]).strip()]))
                         if self.pdferzeugen and pdf != None and len(self.pdfZeilen) == 0: # type: ignore
                             y1 = pdf.get_y()
                             pdf.multi_cell(140, 0.35 * 10 + 1, test.getTest()["8411_testBezeichnung"], fill=(i % 2 == 0), padding=(2, 0)) # type: ignore
@@ -1806,6 +1838,7 @@ class MainWindow(QMainWindow):
             if pdf != None and len(self.pdfZeilen) > 0:
                 i = 0
                 for pdfZeile in self.pdfZeilen:
+                    vorlageZeilen.append(("zeile", [str(pdfZeile[0]), (str(pdfZeile[1]) + " " + str(pdfZeile[2])).strip()]))
                     pdf.cell(0, 0.35 * 10 + 4, str(pdfZeile[0]), fill=(i % 2 == 0))
                     pdf.cell(0, 0.35 * 10 + 4, str(pdfZeile[1]) + " " + str(pdfZeile[2]), align="R", new_x="LMARGIN", new_y="NEXT", fill=(i % 2 == 0))
                     i += 1
@@ -1813,6 +1846,7 @@ class MainWindow(QMainWindow):
             if pdf != None and len(self.pdfZeilenZusaetzlich) > 0:
                 i = testzeilen
                 for pdfZeile in self.pdfZeilenZusaetzlich:
+                    vorlageZeilen.append(("zeile", [str(pdfZeile[0]), (str(pdfZeile[1]) + " " + str(pdfZeile[2])).strip()]))
                     pdf.cell(0, 0.35 * 10 + 4, str(pdfZeile[0]), fill=(i % 2 == 0))
                     pdf.cell(0, 0.35 * 10 + 4, str(pdfZeile[1]) + " " + str(pdfZeile[2]), align="R", new_x="LMARGIN", new_y="NEXT", fill=(i % 2 == 0))
                     i += 1
@@ -1842,7 +1876,21 @@ class MainWindow(QMainWindow):
                 pdf.cell(0, None, "Generiert von ScoreGDT V" + self.version + " (\u00a9 GDT-Tools " + str(datetime.date.today().year) + ")", align="R")
                 logger.logger.info("PDF-Seite aufgebaut")
                 # Praxis: erst das PDF vollständig ablegen, danach die GDT-Datei
-                if praxis.pdfSpeichern(pdf, scorePdfPfad):
+                if praxis_vorlage.vorhanden("score"):
+                    # Praxis: Gestaltung aus der Acrobat-Vorlage
+                    vorlageDaten = {
+                        "Titel": str(self.scoreRoot.get("name")), # type: ignore
+                        "Patient": self.name, "Geburtsdatum": self.geburtsdatum, "Datum": untdat,
+                        "Ergebnis": self.lineEditScoreErgebnis.text() + leerzeichenVorEinheit + self.labelScoreErgebnisEinheit.text(),
+                        "Beurteilung": auswertung if self.erfuellteAuswertungsregel != -1 else "",
+                        "Kommentar": self.lineEditKommentar.text() if self.kommentarAufPdf else "",
+                        "DokumentiertVon": self.praxisDokumentiertVon(),
+                        "Einrichtung": self.einrichtungsname if self.einrichtunguebernehmen else "",
+                    }
+                    pdfOk = praxis_vorlage.erzeugen("score", vorlageDaten, vorlageZeilen, scorePdfPfad)
+                else:
+                    pdfOk = praxis.pdfSpeichern(pdf, scorePdfPfad)
+                if pdfOk:
                     logger.logger.info("PDF-Output nach " + scorePdfPfad + " erfolgreich")
                 else:
                     # Praxis: ohne PDF keinen Rückschrieb mit Verweis auf eine fehlende Datei senden

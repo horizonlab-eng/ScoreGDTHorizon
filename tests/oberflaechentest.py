@@ -163,6 +163,51 @@ erledigt3 = d.testseiteErzeugen(ziel3)
 pruefe(os.path.exists(ziel3) and "PDF/A" in erledigt3, "PDF-Dialog: Testseite erzeugt (" + erledigt3 + ")")
 pruefe(praxis_personen.laden(cfg)["pdf"].get("oben") == 45 and "VERAH" in praxis_personen.laden(cfg)["rollen"], "PDF-Einstellungen und Rollen bestehen nebeneinander")
 
+# --- Acrobat-Vorlagen (Einzel-Score und Verlauf) ---
+import praxis_vorlage
+pruefe(not praxis_vorlage.vorhanden("score"), "Vorlage: anfangs keine Vorlage (Standard-Layout)")
+praxis_vorlage.startvorlageErzeugen("score")
+praxis_vorlage.startvorlageErzeugen("verlauf")
+pruefe(praxis_vorlage.vorhanden("score") and praxis_vorlage.vorhanden("verlauf"), "Vorlage: Startvorlagen angelegt")
+ps = praxis_vorlage.pruefen("score")
+print("        Felder Score-Vorlage:", ps)
+pruefe(ps["ok"] and ps["seiten"] == 2 and len(ps["felder"]) == 12 and not ps["unbekannt"], "Vorlage Score: 2 Seiten, 12 bekannte Felder")
+pv = praxis_vorlage.pruefen("verlauf")
+pruefe(pv["ok"] and "Details" in pv["felder"] and "Ergebnis" not in pv["felder"], "Vorlage Verlauf: Details ja, Ergebnis nein")
+felder = praxis_vorlage.felderLesen(praxis_vorlage.vorlagePfad("score"))
+titel = [f for f in felder if f.name == "titel" and f.seite == 0]
+pruefe(len(titel) == 1 and titel[0].groesse == 16 and titel[0].fett and titel[0].ausrichtung == "C", "Vorlage: Schriftgröße, fett und Ausrichtung gelesen")
+pruefe(any(f.name == "details" and f.mehrzeilig for f in felder), "Vorlage: Details ist mehrzeilig")
+pruefe(len([f for f in felder if f.name == "titel"]) == 2, "Vorlage: Titel auf beiden Seiten (ein Feld, zwei Widgets)")
+
+for art, erwartet in (("score", ["Mustermann", "7 Punkte", "Auffälliges"]), ("verlauf", ["Barthel-Index", "Geriatrie", "CHA2DS2-VASc"])):
+    probe = os.path.join(cfg, "probe_" + art + ".pdf")
+    ok = praxis_vorlage.probeErzeugen(art, probe)
+    pruefe(ok and os.path.exists(probe), "Vorlage " + art + ": Probe-PDF erzeugt")
+    if not ok:
+        continue
+    pruefe(praxis_pdf.istPdfA(probe), "Vorlage " + art + ": Ergebnis ist PDF/A-2b")
+    lp = PdfReader(probe)
+    gesamt = " ".join((s.extract_text() or "") for s in lp.pages)
+    erste = lp.pages[0].extract_text() or ""
+    print("        Seite 1 (" + art + "):", erste[:300].replace("\n", " | "))
+    pruefe(len(lp.pages) >= 2, "Vorlage " + art + ": lange Tabelle läuft auf " + str(len(lp.pages)) + " Seiten")
+    pruefe(all(e in gesamt for e in erwartet), "Vorlage " + art + ": Inhalte stehen im PDF")
+    pruefe("BRIEFKOPF" in erste and "Seite 1 von " + str(len(lp.pages)) in erste, "Vorlage " + art + ": Briefpapier und Seitenzahl auf Seite 1")
+    if len(lp.pages) >= 2:
+        zweite = lp.pages[1].extract_text() or ""
+        pruefe("FOLGESEITE" in zweite and "Mustermann" in zweite, "Vorlage " + art + ": Folgeseite mit Kopf")
+        if art == "score":
+            pruefe("7 Punkte" not in zweite, "Vorlage score: Ergebnis nur auf Seite 1")
+    pruefe("/AcroForm" not in lp.trailer["/Root"] and all(not s.get("/Annots") for s in lp.pages), "Vorlage " + art + ": keine Formularfelder mehr im fertigen PDF")
+    pruefe("Beispielbeurteilung 1 " in gesamt or art == "score", "Vorlage " + art + ": Beurteilungsspalte vorhanden")
+
+d2 = dialogPraxisPdf.PdfDialog()
+pruefe(d2.vorlageLabels["score"].text().startswith("Aktiv") and d2.vorlageKnoepfe["score"]["acrobat"].isEnabled(), "PDF-Dialog: Vorlage wird als aktiv angezeigt")
+os.remove(praxis_vorlage.vorlagePfad("verlauf"))
+d2.anzeigeAktualisieren()
+pruefe(not d2.vorlageKnoepfe["verlauf"]["probe"].isEnabled(), "PDF-Dialog: ohne Vorlage sind Probe/Bearbeiten aus")
+
 # --- Hintergrundbetrieb: Bausteine vorhanden ---
 pruefe(hintergrund.pipeName().startswith("ScoreGDT-"), "Hintergrund: Pipe-Name pro Sitzung")
 pruefe(callable(getattr(praxis, "gdtSpeichern", None)), "Praxis-Hilfsfunktionen vorhanden")
