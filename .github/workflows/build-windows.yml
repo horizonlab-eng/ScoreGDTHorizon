@@ -66,6 +66,32 @@ jobs:
           SCOREGDT_GHOSTSCRIPT: ${{ github.workspace }}\ghostscript_bereit
         run: python tests/oberflaechentest.py
 
+      - name: Updater-Test (Windows PowerShell 5.1 wie auf dem Server)
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          # 1. Alle Skripte auf Schreibfehler pruefen
+          foreach ($datei in Get-ChildItem installer\*.ps1) {
+            $fehler = $null
+            [System.Management.Automation.Language.Parser]::ParseFile($datei.FullName, [ref]$null, [ref]$fehler) | Out-Null
+            if ($fehler) { $fehler | ForEach-Object { Write-Host "$($datei.Name): $_" }; throw "Syntaxfehler in $($datei.Name)" }
+            Write-Host "Syntax ok: $($datei.Name)"
+          }
+          # 2. Geplante Aufgaben anlegen, pruefen und wieder entfernen
+          & powershell -NoProfile -ExecutionPolicy Bypass -File installer\ScoreGDT-Update.ps1 -AufgabeEinrichten
+          & powershell -NoProfile -ExecutionPolicy Bypass -File installer\ScoreGDT-Update.ps1 -HintergrundStarten
+          $u = Get-ScheduledTask -TaskName 'ScoreGDT Update'
+          $h = Get-ScheduledTask -TaskName 'ScoreGDT Hintergrund starten'
+          Write-Host "Update-Aufgabe: $($u.Triggers[0].StartBoundary), StartWhenAvailable=$($u.Settings.StartWhenAvailable)"
+          Write-Host "Hintergrund-Aufgabe: Gruppe=$($h.Principal.GroupId), Zeitlimit=$($h.Settings.ExecutionTimeLimit), Prioritaet=$($h.Settings.Priority)"
+          if (-not $u.Settings.StartWhenAvailable) { throw "Update-Aufgabe holt verpasste Termine nicht nach" }
+          if (-not $h.Principal.GroupId) { throw "Hintergrund-Aufgabe hat keine Benutzergruppe" }
+          if ($h.Settings.ExecutionTimeLimit -ne 'PT0S') { throw "Hintergrund-Aufgabe hat ein Zeitlimit" }
+          & powershell -NoProfile -ExecutionPolicy Bypass -File installer\ScoreGDT-Update.ps1 -AufgabeEntfernen
+          if (Get-ScheduledTask -TaskName 'ScoreGDT*' -ErrorAction SilentlyContinue) { throw "Aufgaben wurden nicht entfernt" }
+          Get-Content "$env:ProgramData\scoregdt\update.log"
+          Write-Host "Updater-Test bestanden"
+
       - name: Sicherheitsprüfung und Versionskennung
         shell: python
         run: |
