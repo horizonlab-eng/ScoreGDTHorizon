@@ -67,6 +67,8 @@ class Hintergrund(QObject):
         self.tray = None
         self.basedir = basedir
         self.vordergrundBis = 0.0  # bis zu diesem Zeitpunkt werden neue Fenster nach vorne geholt
+        self.warteschlange = []    # Aufrufe, die nacheinander abgearbeitet werden
+        self.beimOeffnen = False   # True, solange ein Fenster aufgebaut wird (inkl. Startfenster)
 
     # ---------- Start ----------
     def starten(self) -> int:
@@ -95,7 +97,8 @@ class Hintergrund(QObject):
         self.trayEinrichten()
 
         if sofort:
-            QTimer.singleShot(0, lambda: self.oeffnen(fensterArgs))
+            self.vordergrundBis = time.time() + 20
+            self.aufrufEinplanen(fensterArgs)
         return self.app.exec()
 
     def anLaufendesWeiterreichen(self, fensterArgs) -> bool:
@@ -127,7 +130,36 @@ class Hintergrund(QObject):
         args = [a for a in zeile.split(TRENNER) if a != ""]
         logger.logger.warning("Hintergrund: Aufruf erhalten")
         self.vordergrundBis = time.time() + 20
-        QTimer.singleShot(0, lambda: self.oeffnen(args))
+        self.aufrufEinplanen(args, offenesStartfensterSchliessen=True)
+
+    # ---------- Aufrufe nacheinander abarbeiten ----------
+    def aufrufEinplanen(self, args, offenesStartfensterSchliessen=False):
+        """Fenster werden nie ineinander verschachtelt geoeffnet (das blockierte sich
+        gegenseitig). Ist beim neuen Aufruf noch ein Startfenster ohne Auswahl offen,
+        wird es geschlossen - dort wurde noch nichts eingegeben."""
+        self.warteschlange.append(list(args))
+        if self.beimOeffnen:
+            import praxisStartfenster
+            offen = QApplication.activeModalWidget()
+            if offenesStartfensterSchliessen and isinstance(offen, praxisStartfenster.Startfenster):
+                logger.logger.warning("Hintergrund: offenes Startfenster durch neuen Aufruf ersetzt")
+                offen.reject()
+            elif offen is not None:
+                self.nachVorne(offen)
+            return
+        QTimer.singleShot(0, self.naechsterAufruf)
+
+    def naechsterAufruf(self):
+        if self.beimOeffnen or not self.warteschlange:
+            return
+        args = self.warteschlange.pop(0)
+        self.beimOeffnen = True
+        try:
+            self.oeffnen(args)
+        finally:
+            self.beimOeffnen = False
+        if self.warteschlange:
+            QTimer.singleShot(0, self.naechsterAufruf)
 
     # ---------- Fenster ----------
     def oeffnen(self, args):
@@ -250,7 +282,7 @@ class Hintergrund(QObject):
                 self.neustarts.add(id(fenster))
                 QTimer.singleShot(0, lambda: self.schliessen(fenster))
             self.vordergrundBis = time.time() + 20
-            QTimer.singleShot(50, lambda: self.oeffnen(neueArgs))
+            QTimer.singleShot(50, lambda: self.aufrufEinplanen(neueArgs))
             raise FensterBeenden()
 
         vorherigerHook = sys.excepthook
