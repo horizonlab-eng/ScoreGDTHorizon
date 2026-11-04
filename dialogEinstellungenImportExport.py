@@ -17,7 +17,7 @@ class EinstellungenImportExport(QDialog):
         self.configPath = configPath
 
         #config.ini lesen
-        self.configIni = configparser.ConfigParser()
+        self.configIni = configparser.ConfigParser(interpolation=None)
         self.configIni.read(os.path.join(configPath, "config.ini"), encoding="utf-8")
 
         self.setWindowTitle("Einstellungen im-/ exportieren")
@@ -100,7 +100,7 @@ class EinstellungenImportExport(QDialog):
             fd.setLabelText(QFileDialog.DialogLabel.Reject, "Abbrechen")
             if fd.exec() == 1:
                 datei = fd.selectedFiles()[0]
-                configImport = configparser.ConfigParser()
+                configImport = configparser.ConfigParser(interpolation=None)
                 configImport.read(datei)
                 if "Allgemein" in configImport.sections() or "GDT" in configImport.sections() or "Benutzer" in configImport.sections() or "Erweiterungen" in configImport.sections():
                     i=0
@@ -133,7 +133,7 @@ class EinstellungenImportExport(QDialog):
             fd.setLabelText(QFileDialog.DialogLabel.Accept, "Speichern")
             fd.setLabelText(QFileDialog.DialogLabel.Reject, "Abbrechen")
             if fd.exec() == 1:
-                configExport = configparser.ConfigParser()
+                configExport = configparser.ConfigParser(interpolation=None)
                 pfad = fd.directory().absolutePath()
                 dateiname = datetime.datetime.strftime(datetime.datetime.now(), "%Y%m%d%H%M%S") + "_ScoreGdtEinstellungen.sed"
                 datei = os.path.join(pfad, dateiname)

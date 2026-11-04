@@ -41,7 +41,7 @@ class ScoreAuswahl(QDialog):
         self.patId = patId
 
         # config.ini lesen
-        configIni = configparser.ConfigParser()
+        configIni = configparser.ConfigParser(interpolation=None)
         configIni.read(os.path.join(configPath, "config.ini"), encoding="utf-8")
         self.version = configIni["Allgemein"]["version"]
         self.trendverzeichnis = configIni["Allgemein"]["trendverzeichnis"]

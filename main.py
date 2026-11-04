@@ -122,7 +122,7 @@ class MainWindow(QMainWindow):
             logger.logger.info("Plattform: nicht win32")
             updateSafePath = os.path.expanduser("~/.config/scoregdt")
         self.configPath = updateSafePath
-        self.configIni = configparser.ConfigParser()
+        self.configIni = configparser.ConfigParser(interpolation=None)
         if os.path.exists(os.path.join(updateSafePath, "config.ini")):
             logger.logger.info("config.ini in " + updateSafePath + " existiert")
             self.configPath = updateSafePath
@@ -287,7 +287,7 @@ class MainWindow(QMainWindow):
                 sys.exit()
 
         # Version vergleichen und gegebenenfalls aktualisieren
-        configIniBase = configparser.ConfigParser()
+        configIniBase = configparser.ConfigParser(interpolation=None)
         try:
             configIniBase.read(os.path.join(basedir, "config.ini"), encoding="utf-8")
             versionNeu = configIniBase["Allgemein"]["version"]

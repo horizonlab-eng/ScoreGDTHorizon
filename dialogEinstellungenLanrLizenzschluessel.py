@@ -17,7 +17,7 @@ class EinstellungenProgrammerweiterungen(QDialog):
         super().__init__()
 
         #config.ini lesen
-        configIni = configparser.ConfigParser()
+        configIni = configparser.ConfigParser(interpolation=None)
         configIni.read(os.path.join(configPath, "config.ini"))
         self.lanr = configIni["Erweiterungen"]["lanr"]
         self.lizenzschluessel = gdttoolsL.GdtToolsLizenzschluessel.dekrypt(configIni["Erweiterungen"]["lizenzschluessel"])

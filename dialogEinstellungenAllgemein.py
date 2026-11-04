@@ -28,7 +28,7 @@ class EinstellungenAllgemein(QDialog):
         self.fontBold.setBold(True)
 
         # config.ini lesen
-        configIni = configparser.ConfigParser()
+        configIni = configparser.ConfigParser(interpolation=None)
         configIni.read(os.path.join(configPath, "config.ini"), encoding="utf-8")
         self.einrichtungsname = configIni["Allgemein"]["einrichtungsname"]
         self.einrichtunguebernehmen = configIni["Allgemein"]["einrichtunguebernehmen"] == "True"

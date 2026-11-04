@@ -18,7 +18,7 @@ class EinstellungenBenutzer(QDialog):
         super().__init__()
 
         #config.ini lesen
-        configIni = configparser.ConfigParser()
+        configIni = configparser.ConfigParser(interpolation=None)
         configIni.read(os.path.join(configPath, "config.ini"), encoding="utf-8")
         self.benutzernamen = (configIni["Benutzer"]["namen"]).split("::")
         self.benutzerkuerzel = (configIni["Benutzer"]["kuerzel"]).split("::")
