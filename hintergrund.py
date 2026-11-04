@@ -19,11 +19,11 @@ Beides wird hier abgefangen: sys.exit schliesst nur das betroffene Fenster,
 os.execl oeffnet ein neues Fenster im laufenden Programm (z. B. "Score
 auswaehlen" ohne Neustart).
 """
-import sys, os, ctypes
+import sys, os, ctypes, time
 import logger, praxis
-from PySide6.QtCore import QTimer, QObject, Qt
+from PySide6.QtCore import QTimer, QObject, Qt, QEvent
 from PySide6.QtGui import QIcon, QAction
-from PySide6.QtWidgets import QApplication, QSystemTrayIcon, QMenu, QMessageBox
+from PySide6.QtWidgets import QApplication, QSystemTrayIcon, QMenu, QMessageBox, QWidget
 from PySide6.QtNetwork import QLocalServer, QLocalSocket
 
 SCHALTER_HINTERGRUND = "--hintergrund"
@@ -66,6 +66,7 @@ class Hintergrund(QObject):
         self.server = None
         self.tray = None
         self.basedir = basedir
+        self.vordergrundBis = 0.0  # bis zu diesem Zeitpunkt werden neue Fenster nach vorne geholt
 
     # ---------- Start ----------
     def starten(self) -> int:
@@ -86,9 +87,10 @@ class Hintergrund(QObject):
             # Ohne Pipe trotzdem normal weiterarbeiten, falls ein Fenster gewuenscht ist
         else:
             self.server.newConnection.connect(self.neueVerbindung)
-            logger.logger.info("Hintergrund: wartet auf " + pipeName())
+            logger.logger.warning("Hintergrund: gestartet, wartet auf " + pipeName())
 
         self.app.setQuitOnLastWindowClosed(False)
+        self.app.installEventFilter(self)
         self.abfangenEinrichten()
         self.trayEinrichten()
 
@@ -123,7 +125,8 @@ class Hintergrund(QObject):
         sock.write(b"OK\n")
         sock.flush()
         args = [a for a in zeile.split(TRENNER) if a != ""]
-        logger.logger.info("Hintergrund: Aufruf erhalten, Argumente: " + str(args))
+        logger.logger.warning("Hintergrund: Aufruf erhalten")
+        self.vordergrundBis = time.time() + 20
         QTimer.singleShot(0, lambda: self.oeffnen(args))
 
     # ---------- Fenster ----------
@@ -144,8 +147,7 @@ class Hintergrund(QObject):
         fid = id(fenster)
         fenster.destroyed.connect(lambda *_ , f=fenster, i=fid: self.fensterZu(f, i))
         fenster.show()
-        fenster.raise_()
-        fenster.activateWindow()
+        self.nachVorne(fenster)
 
     def anfrageMerken(self, fenster):
         """Merkt sich, welche Anfrage-Datei (SCORMEDA.gdt) dieses Fenster gelesen hat."""
@@ -195,6 +197,41 @@ class Hintergrund(QObject):
             f = f.f_back
         return None
 
+    # ---------- Fenster nach vorne holen ----------
+    def eventFilter(self, obj, event):
+        """Jedes Fenster (auch Dialoge, die ScoreGDT waehrend des Aufbaus zeigt),
+        das kurz nach einem Aufruf erscheint, wird nach vorne geholt."""
+        if event.type() == QEvent.Type.Show and isinstance(obj, QWidget) and obj.isWindow() and time.time() < self.vordergrundBis:
+            QTimer.singleShot(0, lambda w=obj: self.nachVorne(w))
+        return False
+
+    def nachVorne(self, fenster):
+        try:
+            fenster.raise_()
+            fenster.activateWindow()
+            if os.name != "nt":
+                return
+            hwnd = int(fenster.winId())
+            user32 = ctypes.windll.user32
+            kernel32 = ctypes.windll.kernel32
+            vorne = user32.GetForegroundWindow()
+            fremderThread = user32.GetWindowThreadProcessId(vorne, None)
+            eigenerThread = kernel32.GetCurrentThreadId()
+            verbunden = False
+            if fremderThread and fremderThread != eigenerThread:
+                verbunden = bool(user32.AttachThreadInput(fremderThread, eigenerThread, True))
+            HWND_TOPMOST, HWND_NOTOPMOST = -1, -2
+            SWP_NOMOVE, SWP_NOSIZE, SWP_SHOWWINDOW = 0x0002, 0x0001, 0x0040
+            user32.ShowWindow(hwnd, 5)  # SW_SHOW
+            user32.SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW)
+            user32.SetWindowPos(hwnd, HWND_NOTOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW)
+            user32.BringWindowToTop(hwnd)
+            user32.SetForegroundWindow(hwnd)
+            if verbunden:
+                user32.AttachThreadInput(fremderThread, eigenerThread, False)
+        except Exception as e:
+            logger.logger.warning("Hintergrund: Fenster konnte nicht nach vorne geholt werden: " + str(e))
+
     # ---------- sys.exit und os.execl abfangen ----------
     def abfangenEinrichten(self):
         def beenden(*_):
@@ -212,6 +249,7 @@ class Hintergrund(QObject):
                 fenster._praxisBeendet = True
                 self.neustarts.add(id(fenster))
                 QTimer.singleShot(0, lambda: self.schliessen(fenster))
+            self.vordergrundBis = time.time() + 20
             QTimer.singleShot(50, lambda: self.oeffnen(neueArgs))
             raise FensterBeenden()
 
