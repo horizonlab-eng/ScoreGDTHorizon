@@ -51,6 +51,8 @@ Source: "..\dist\scoregdt\*"; DestDir: "{app}"; Flags: ignoreversion recursesubd
 Name: "{commonprograms}\ScoreGDT"; Filename: "{app}\scoregdt.exe"
 Name: "{commonprograms}\ScoreGDT aktualisieren"; Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\ScoreGDT-Update.ps1"""; IconFilename: "{app}\scoregdt.exe"
 Name: "{commondesktop}\ScoreGDT"; Filename: "{app}\scoregdt.exe"; Tasks: desktopicon
+; Bei jeder Anmeldung ScoreGDT im Hintergrund starten (Etappe 2)
+Name: "{commonstartup}\ScoreGDT Hintergrund"; Filename: "{app}\scoregdt.exe"; Parameters: "--hintergrund"; IconFilename: "{app}\scoregdt.exe"
 ; Bei jeder Anmeldung die persoenlichen Austauschordner anlegen (unsichtbar)
 Name: "{commonstartup}\ScoreGDT Ordner"; Filename: "powershell.exe"; Parameters: "-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File ""{app}\ScoreGDT-Ordner.ps1"""; IconFilename: "{app}\scoregdt.exe"
 
@@ -65,3 +67,26 @@ Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -Fil
 [UninstallDelete]
 Type: filesandordirs; Name: "{app}\log"
 Type: filesandordirs; Name: "{app}\pdf"
+
+[Code]
+// ScoreGDT laeuft im Hintergrund in jeder Sitzung und sperrt seine Dateien.
+// Vor dem Ersetzen der Dateien alle ScoreGDT-Prozesse auf dem Server beenden.
+procedure ScoreGdtBeenden();
+var
+  ResultCode: Integer;
+begin
+  Exec(ExpandConstant('{sys}\taskkill.exe'), '/F /IM scoregdt.exe', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  Sleep(1500);
+end;
+
+function PrepareToInstall(var NeedsRestart: Boolean): String;
+begin
+  ScoreGdtBeenden();
+  Result := '';
+end;
+
+function InitializeUninstall(): Boolean;
+begin
+  ScoreGdtBeenden();
+  Result := True;
+end;

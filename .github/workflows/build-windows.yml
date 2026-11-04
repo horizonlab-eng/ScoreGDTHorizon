@@ -74,6 +74,13 @@ jobs:
           --add-data "pdf;pdf"
           main.py
 
+      - name: Hilfsprogramm ScoreGDT-Start.exe übersetzen
+        shell: pwsh
+        run: |
+          $csc = "$env:WINDIR\Microsoft.NET\Framework64\v4.0.30319\csc.exe"
+          & $csc /nologo /target:winexe /optimize+ /out:dist\scoregdt\ScoreGDT-Start.exe /win32icon:icons\program.ico installer\ScoreGDT-Start.cs
+          if ($LASTEXITCODE -ne 0) { throw "Hilfsprogramm konnte nicht übersetzt werden" }
+
       - name: Hilfsskripte und Build-Kennung beilegen
         shell: pwsh
         run: |

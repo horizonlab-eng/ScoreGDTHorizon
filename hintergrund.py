@@ -1,0 +1,266 @@
+"""
+Hintergrundbetrieb fuer ScoreGDT (Zweig "praxis").
+
+ScoreGDT wird bei der Windows-Anmeldung einmal pro Sitzung mit
+    scoregdt.exe --hintergrund
+gestartet und wartet unsichtbar (Symbol neben der Uhr). medatixx ruft statt
+scoregdt.exe das kleine Hilfsprogramm ScoreGDT-Start.exe auf. Dieses meldet
+sich ueber eine lokale Pipe ("ScoreGDT-<Sitzungsnummer>") und das laufende
+ScoreGDT oeffnet sofort ein neues Fenster - ohne das langsame Laden von
+Python und Qt.
+
+Laeuft kein Hintergrund-ScoreGDT, startet das Hilfsprogramm
+    scoregdt.exe --hintergrund --sofort <Argumente>
+Dann dauert es einmal laenger, danach laeuft der Hintergrundbetrieb.
+
+ScoreGDT beendet sich an vielen Stellen selbst (sys.exit) oder startet sich
+neu (os.execl). Im Hintergrundbetrieb wuerde das das ganze Programm beenden.
+Beides wird hier abgefangen: sys.exit schliesst nur das betroffene Fenster,
+os.execl oeffnet ein neues Fenster im laufenden Programm (z. B. "Score
+auswaehlen" ohne Neustart).
+"""
+import sys, os, ctypes
+import logger, praxis
+from PySide6.QtCore import QTimer, QObject, Qt
+from PySide6.QtGui import QIcon, QAction
+from PySide6.QtWidgets import QApplication, QSystemTrayIcon, QMenu, QMessageBox
+from PySide6.QtNetwork import QLocalServer, QLocalSocket
+
+SCHALTER_HINTERGRUND = "--hintergrund"
+SCHALTER_SOFORT = "--sofort"
+TRENNER = "\x1f"
+
+
+class FensterBeenden(Exception):
+    """Ersetzt im Hintergrundbetrieb sys.exit: bricht nur den laufenden Ablauf ab."""
+
+
+def istHintergrundStart(argv) -> bool:
+    return SCHALTER_HINTERGRUND in argv
+
+
+def sitzungsnummer() -> int:
+    """Windows-Sitzungsnummer (auf dem Terminalserver je angemeldeter Sitzung eindeutig)."""
+    try:
+        nr = ctypes.c_ulong()
+        if ctypes.windll.kernel32.ProcessIdToSessionId(os.getpid(), ctypes.byref(nr)):
+            return nr.value
+    except Exception:
+        pass
+    return 0
+
+
+def pipeName() -> str:
+    return "ScoreGDT-" + str(sitzungsnummer())
+
+
+class Hintergrund(QObject):
+    def __init__(self, app: QApplication, fensterKlasse, basedir: str):
+        super().__init__()
+        self.app = app
+        self.fensterKlasse = fensterKlasse
+        self.programm = sys.argv[0]
+        self.fenster = []  # offene Hauptfenster (Referenzen halten)
+        self.anfragen = {}  # id(Fenster) -> (Pfad der gelesenen Anfrage, Zeitstempel der Datei)
+        self.neustarts = set()  # id(Fenster), die per "Neustart" ersetzt werden
+        self.server = None
+        self.tray = None
+        self.basedir = basedir
+
+    # ---------- Start ----------
+    def starten(self) -> int:
+        argv = list(sys.argv[1:])
+        sofort = SCHALTER_SOFORT in argv
+        fensterArgs = [a for a in argv if a not in (SCHALTER_HINTERGRUND, SCHALTER_SOFORT)]
+
+        # Laeuft in dieser Sitzung schon ein Hintergrund-ScoreGDT? Dann nur weiterreichen.
+        if self.anLaufendesWeiterreichen(fensterArgs if sofort else None):
+            logger.logger.info("Hintergrund: laeuft bereits in dieser Sitzung")
+            return 0
+
+        self.server = QLocalServer(self)
+        self.server.setSocketOptions(QLocalServer.SocketOption.UserAccessOption)
+        QLocalServer.removeServer(pipeName())
+        if not self.server.listen(pipeName()):
+            logger.logger.error("Hintergrund: Pipe konnte nicht geoeffnet werden: " + self.server.errorString())
+            # Ohne Pipe trotzdem normal weiterarbeiten, falls ein Fenster gewuenscht ist
+        else:
+            self.server.newConnection.connect(self.neueVerbindung)
+            logger.logger.info("Hintergrund: wartet auf " + pipeName())
+
+        self.app.setQuitOnLastWindowClosed(False)
+        self.abfangenEinrichten()
+        self.trayEinrichten()
+
+        if sofort:
+            QTimer.singleShot(0, lambda: self.oeffnen(fensterArgs))
+        return self.app.exec()
+
+    def anLaufendesWeiterreichen(self, fensterArgs) -> bool:
+        sock = QLocalSocket()
+        sock.connectToServer(pipeName())
+        if not sock.waitForConnected(300):
+            return False
+        if fensterArgs is not None:
+            sock.write((TRENNER.join(fensterArgs) + "\n").encode("utf-8"))
+            sock.flush()
+            sock.waitForBytesWritten(1000)
+            sock.waitForReadyRead(2000)
+        sock.disconnectFromServer()
+        return True
+
+    # ---------- Aufrufe vom Hilfsprogramm ----------
+    def neueVerbindung(self):
+        while self.server.hasPendingConnections():
+            sock = self.server.nextPendingConnection()
+            sock.readyRead.connect(lambda s=sock: self.nachrichtLesen(s))
+            sock.disconnected.connect(sock.deleteLater)
+
+    def nachrichtLesen(self, sock):
+        if not sock.canReadLine():
+            return
+        zeile = bytes(sock.readLine()).decode("utf-8").rstrip("\r\n")
+        sock.write(b"OK\n")
+        sock.flush()
+        args = [a for a in zeile.split(TRENNER) if a != ""]
+        logger.logger.info("Hintergrund: Aufruf erhalten, Argumente: " + str(args))
+        QTimer.singleShot(0, lambda: self.oeffnen(args))
+
+    # ---------- Fenster ----------
+    def oeffnen(self, args):
+        sys.argv = [self.programm] + list(args)
+        try:
+            fenster = self.fensterKlasse()
+        except FensterBeenden:
+            return
+        except Exception as e:
+            logger.logger.error("Hintergrund: Fenster konnte nicht geoeffnet werden: " + str(e))
+            return
+        if getattr(fenster, "_praxisBeendet", False):
+            return
+        self.fenster.append(fenster)
+        self.anfrageMerken(fenster)
+        fenster.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+        fid = id(fenster)
+        fenster.destroyed.connect(lambda *_ , f=fenster, i=fid: self.fensterZu(f, i))
+        fenster.show()
+        fenster.raise_()
+        fenster.activateWindow()
+
+    def anfrageMerken(self, fenster):
+        """Merkt sich, welche Anfrage-Datei (SCORMEDA.gdt) dieses Fenster gelesen hat."""
+        try:
+            pfad = os.path.join(fenster.gdtImportVerzeichnis, fenster.kuerzelscoregdt + fenster.kuerzelpraxisedv + ".gdt")
+            if os.path.exists(pfad):
+                self.anfragen[id(fenster)] = (pfad, os.path.getmtime(pfad))
+        except Exception:
+            pass
+
+    def fensterZu(self, fenster, fid):
+        """Fenster wurde geschlossen: Anfrage loeschen - ausser bei Neustart (Score wechseln)
+        oder wenn medatixx inzwischen eine neue Anfrage geschrieben hat."""
+        self.fensterEntfernen(fenster)
+        eintrag = self.anfragen.pop(fid, None)
+        if fid in self.neustarts:
+            self.neustarts.discard(fid)
+            return
+        if eintrag is None:
+            return
+        pfad, zeit = eintrag
+        try:
+            if os.path.exists(pfad) and os.path.getmtime(pfad) == zeit:
+                praxis.anfrageLoeschen(pfad)
+        except Exception:
+            pass
+
+    def fensterEntfernen(self, fenster):
+        if fenster in self.fenster:
+            self.fenster.remove(fenster)
+
+    def schliessen(self, fenster):
+        try:
+            fenster.close()
+            fenster.deleteLater()
+        except RuntimeError:
+            pass  # bereits geloescht
+        self.fensterEntfernen(fenster)
+
+    def aktuellesFenster(self):
+        """Sucht im Aufrufstapel das Hauptfenster, aus dem sys.exit/os.execl kam."""
+        f = sys._getframe(2)
+        while f is not None:
+            s = f.f_locals.get("self")
+            if isinstance(s, self.fensterKlasse):
+                return s
+            f = f.f_back
+        return None
+
+    # ---------- sys.exit und os.execl abfangen ----------
+    def abfangenEinrichten(self):
+        def beenden(*_):
+            fenster = self.aktuellesFenster()
+            if fenster is not None:
+                fenster._praxisBeendet = True
+                QTimer.singleShot(0, lambda: self.schliessen(fenster))
+            raise FensterBeenden()
+
+        def neustarten(_pfad, *args):
+            # Aufruf im Original: os.execl(sys.executable, __file__, *sys.argv)
+            neueArgs = list(args[2:])
+            fenster = self.aktuellesFenster()
+            if fenster is not None:
+                fenster._praxisBeendet = True
+                self.neustarts.add(id(fenster))
+                QTimer.singleShot(0, lambda: self.schliessen(fenster))
+            QTimer.singleShot(50, lambda: self.oeffnen(neueArgs))
+            raise FensterBeenden()
+
+        vorherigerHook = sys.excepthook
+
+        def fehlerHook(typ, wert, tb):
+            if issubclass(typ, FensterBeenden):
+                return  # gewollter Abbruch eines Fensters, kein Fehler
+            logger.logger.error("Hintergrund: unbehandelter Fehler: " + typ.__name__ + ": " + str(wert))
+            try:
+                vorherigerHook(typ, wert, tb)
+            except Exception:
+                pass
+
+        sys.exit = beenden
+        os.execl = neustarten
+        sys.excepthook = fehlerHook
+
+    # ---------- Symbol neben der Uhr ----------
+    def trayEinrichten(self):
+        if not QSystemTrayIcon.isSystemTrayAvailable():
+            return
+        self.tray = QSystemTrayIcon(QIcon(os.path.join(self.basedir, "icons", "program.png")), self)
+        self.tray.setToolTip("ScoreGDT ist bereit")
+        menue = QMenu()
+        beendenAktion = QAction("ScoreGDT im Hintergrund beenden", menue)
+        beendenAktion.triggered.connect(self.wirklichBeenden)
+        menue.addAction(beendenAktion)
+        self.tray.setContextMenu(menue)
+        self._menue = menue
+        self.tray.show()
+
+    def wirklichBeenden(self):
+        if self.fenster:
+            mb = QMessageBox(QMessageBox.Icon.Question, "Hinweis von ScoreGDT",
+                             "Es ist noch ein ScoreGDT-Fenster offen. Trotzdem beenden?",
+                             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+            mb.button(QMessageBox.StandardButton.Yes).setText("Ja")
+            mb.button(QMessageBox.StandardButton.No).setText("Nein")
+            if mb.exec() != QMessageBox.StandardButton.Yes:
+                return
+        if self.server is not None:
+            self.server.close()
+        if self.tray is not None:
+            self.tray.hide()
+        self.app.quit()
+
+
+def starten(app: QApplication, fensterKlasse, basedir: str) -> int:
+    h = Hintergrund(app, fensterKlasse, basedir)
+    app._praxisHintergrund = h  # Referenz halten
+    return h.starten()

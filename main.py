@@ -2023,6 +2023,11 @@ directory = QLibraryInfo.path(QLibraryInfo.LibraryPath.TranslationsPath)
 qt.load(filename, directory)
 app.installTranslator(qt)
 app.setWindowIcon(QIcon(os.path.join(basedir, "icons", "program.png")))
-window = MainWindow()
-window.show()
-app.exec()
+# Praxis: Hintergrundbetrieb (scoregdt.exe --hintergrund), siehe hintergrund.py
+import hintergrund
+if hintergrund.istHintergrundStart(sys.argv):
+    hintergrund.starten(app, MainWindow, basedir)
+else:
+    window = MainWindow()
+    window.show()
+    app.exec()
