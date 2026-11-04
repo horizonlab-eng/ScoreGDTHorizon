@@ -5,7 +5,7 @@ fehl, bricht der Bau ab und es wird keine neue Version veroeffentlicht.
 
 Aufruf aus dem Projektordner:  python tests/oberflaechentest.py
 """
-import os, sys, json, shutil, tempfile, configparser
+import os, sys, json, shutil, tempfile, configparser, datetime
 from xml.etree import ElementTree as ET
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -28,6 +28,7 @@ alle = [str(s.get("name")) for s in class_score.Score.getGesamtRoot(scoresPfad).
 
 # Einstellungsordner wie C:\ProgramData\scoregdt nachbilden
 cfg = tempfile.mkdtemp()
+os.environ["SCOREGDT_CONFIG"] = cfg
 ini = configparser.ConfigParser(interpolation=None)
 ini.read(os.path.join(PROJEKT, "config.ini"), encoding="utf-8")
 ini["Benutzer"]["namen"] = "Dr. Beispiel::Sabine Muster"
@@ -98,6 +99,67 @@ pruefe(gespeichert["personRolle"] == {"BO": "Arzt", "SH": "VERAH"}, "Rollen-Dial
 pruefe(gespeichert["personStandardscore"].get("BO") == alle[5], "Rollen-Dialog: Standard-Score gespeichert")
 pruefe(gespeichert["vorauswahlUeber"] == "windows", "Rollen-Dialog: Vorauswahl nach Windows-Anmeldung gespeichert")
 r.tabelle.selectRow(1)
+
+# --- Etappe 4: Verlauf ---
+import class_trends, dialogTrendanzeige, praxis_pdf, scorepdf, dialogPraxisPdf
+from PySide6.QtWidgets import QPushButton
+test = class_trends.Test("qSofa-Score", "Infektiologie", class_trends.GdtTool.SCOREGDT)
+for i in range(5):
+    test.addTrend(class_trends.Trend(datetime.datetime(2026, 11, 4, 10, i), str(i) + " Punkte", "Beurteilung"))
+pruefe(len(test.getLetzteTrends()) == 5, "Verlauf: mehrere Scores am selben Tag bleiben erhalten")
+for i in range(40):
+    test.addTrend(class_trends.Trend(datetime.datetime(2026, 1, 1) + datetime.timedelta(days=i), "x", "y"))
+pruefe(len(test.getLetzteTrends()) == 30, "Verlauf: höchstens 30 Einträge je Score")
+dt = dialogTrendanzeige.Trendanzeige([test])
+knopf = [k for k in dt.findChildren(QPushButton) if k.text() == "PDF ansehen / drucken"]
+pruefe(len(knopf) == 1, "Trendanzeige: Knopf 'PDF ansehen / drucken' vorhanden")
+if knopf:
+    knopf[0].click()
+    pruefe(dt.result() == dialogTrendanzeige.ANSEHEN, "Trendanzeige: Knopf liefert 'ansehen'")
+
+# --- Etappe 4: PDF/A und Briefpapier ---
+def beispielPdf(pfad, zeilen=10):
+    pdf = scorepdf.scorepdf("P", "mm", "A4", "Testbericht")
+    pdf.add_page()
+    pdf.set_font("dejavu", "", 11)
+    for i in range(zeilen):
+        pdf.cell(0, 7, "Zeile " + str(i + 1) + ": Ergebnis – Beurteilung äöüß", new_x="LMARGIN", new_y="NEXT")
+    pdf.output(pfad)
+
+pruefe(bool(praxis_pdf.ghostscriptProgramm()), "Ghostscript gefunden: " + str(praxis_pdf.ghostscriptProgramm()))
+roh = os.path.join(cfg, "_roh1.tmp"); ziel = os.path.join(cfg, "a.pdf")
+beispielPdf(roh)
+erledigt = praxis_pdf.fertigstellen(roh, ziel, briefpapier="", pdfa=True)
+pruefe("PDF/A" in erledigt and praxis_pdf.istPdfA(ziel), "PDF/A-2b erzeugt (" + erledigt + ")")
+pruefe(not os.path.exists(roh), "Roh-PDF wird aufgeräumt")
+
+from fpdf import FPDF
+bp = FPDF()
+bp.add_page(); bp.set_font("helvetica", "B", 20); bp.text(20, 20, "BRIEFKOPF"); bp.rect(10, 270, 190, 15)
+bp.add_page(); bp.set_font("helvetica", "B", 20); bp.text(20, 20, "FOLGESEITE")
+bp.output(os.path.join(cfg, "briefpapier.pdf"))
+pruefe(praxis_pdf.briefpapierPfad() != "", "Briefpapier wird gefunden")
+roh2 = os.path.join(cfg, "_roh2.tmp"); ziel2 = os.path.join(cfg, "b.pdf")
+beispielPdf(roh2, zeilen=60)
+erledigt2 = praxis_pdf.fertigstellen(roh2, ziel2)
+pruefe("Briefpapier" in erledigt2 and "PDF/A" in erledigt2 and praxis_pdf.istPdfA(ziel2), "Briefpapier + PDF/A (" + erledigt2 + ")")
+from pypdf import PdfReader
+seiten = PdfReader(ziel2).pages
+pruefe(len(seiten) >= 2, "Mehrseitiges PDF: " + str(len(seiten)) + " Seiten")
+if len(seiten) >= 2:
+    t0, t1 = seiten[0].extract_text() or "", seiten[1].extract_text() or ""
+    pruefe("BRIEFKOPF" in t0 and "Zeile 1" in t0, "Seite 1: Briefkopf und Inhalt")
+    pruefe("FOLGESEITE" in t1 and "BRIEFKOPF" not in t1, "Seite 2: Folgeseiten-Vorlage")
+
+d = dialogPraxisPdf.PdfDialog()
+d.spinOben.setValue(45); d.spinUnten.setValue(30)
+d.accept()
+w = praxis_pdf.einstellungen()
+pruefe(w["oben"] == 45 and w["unten"] == 30 and w["pdfa"] is True, "PDF-Dialog: Einstellungen gespeichert")
+ziel3 = os.path.join(cfg, "testseite.pdf")
+erledigt3 = d.testseiteErzeugen(ziel3)
+pruefe(os.path.exists(ziel3) and "PDF/A" in erledigt3, "PDF-Dialog: Testseite erzeugt (" + erledigt3 + ")")
+pruefe(praxis_personen.laden(cfg)["pdf"].get("oben") == 45 and "VERAH" in praxis_personen.laden(cfg)["rollen"], "PDF-Einstellungen und Rollen bestehen nebeneinander")
 
 # --- Hintergrundbetrieb: Bausteine vorhanden ---
 pruefe(hintergrund.pipeName().startswith("ScoreGDT-"), "Hintergrund: Pipe-Name pro Sitzung")

@@ -39,12 +39,31 @@ jobs:
       - name: Abhängigkeiten installieren
         run: |
           python -m pip install --upgrade pip
-          pip install pyside6 fpdf2 requests pyinstaller
+          pip install pyside6 fpdf2 requests pyinstaller pypdf
+
+      - name: Ghostscript für PDF/A vorbereiten
+        shell: pwsh
+        run: |
+          choco install ghostscript -y --no-progress
+          $gs = Get-ChildItem "C:\Program Files\gs" -Directory | Sort-Object Name -Descending | Select-Object -First 1
+          if (-not $gs) { throw "Ghostscript wurde nicht installiert" }
+          $ziel = "ghostscript_bereit"
+          New-Item -ItemType Directory -Force $ziel | Out-Null
+          Copy-Item (Join-Path $gs.FullName "bin") (Join-Path $ziel "bin") -Recurse
+          Copy-Item (Join-Path $gs.FullName "lib") (Join-Path $ziel "lib") -Recurse
+          $icc = Get-ChildItem $gs.FullName -Recurse -Filter "srgb.icc" | Select-Object -First 1
+          if (-not $icc) { $icc = Get-ChildItem $gs.FullName -Recurse -Filter "default_rgb.icc" | Select-Object -First 1 }
+          if (-not $icc) { throw "Kein sRGB-Farbprofil in Ghostscript gefunden" }
+          Copy-Item $icc.FullName (Join-Path $ziel "srgb.icc")
+          Copy-Item installer\ghostscript\PDFA_def.ps (Join-Path $ziel "PDFA_def.ps")
+          Get-ChildItem $gs.FullName -File | Where-Object { $_.Name -match "LICENSE|COPYING" } | Copy-Item -Destination $ziel
+          & (Join-Path $ziel "bin\gswin64c.exe") --version
 
       - name: Oberflächentest (Praxis-Fenster, ohne Bildschirm)
         env:
           QT_QPA_PLATFORM: offscreen
           PYTHONIOENCODING: utf-8
+          SCOREGDT_GHOSTSCRIPT: ${{ github.workspace }}\ghostscript_bereit
         run: python tests/oberflaechentest.py
 
       - name: Sicherheitsprüfung und Versionskennung
@@ -78,6 +97,7 @@ jobs:
           --add-data "fonts;fonts"
           --add-data "bilder;bilder"
           --add-data "pdf;pdf"
+          --hidden-import pypdf
           main.py
 
       - name: Hilfsprogramm ScoreGDT-Start.exe übersetzen
@@ -93,6 +113,7 @@ jobs:
           Set-Content -Path dist/scoregdt/build.txt -Value $env:SCOREGDT_TAG -Encoding ascii
           Copy-Item installer/ScoreGDT-Update.ps1 dist/scoregdt/
           Copy-Item installer/ScoreGDT-Ordner.ps1 dist/scoregdt/
+          Copy-Item ghostscript_bereit dist/scoregdt/ghostscript -Recurse
 
       - name: ZIP erstellen
         shell: pwsh

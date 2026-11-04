@@ -10,11 +10,15 @@ from PySide6.QtWidgets import (
     QComboBox,
     QLineEdit,
     QPushButton, 
-    QFileDialog
+    QFileDialog,
+    QScrollArea,
+    QWidget
 )
 
 from PySide6.QtGui import QFont
 import class_trends
+
+ANSEHEN = 3  # Praxis: Ergebnis von exec(), wenn "PDF ansehen / drucken" gewaehlt wurde
 
 class Trendanzeige(QDialog):
     def __init__(self, ausgewaehlteTests:list):
@@ -28,7 +32,10 @@ class Trendanzeige(QDialog):
 
         self.setWindowTitle("Score-Trend")
         self.buttonBox = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
-        self.buttonBox.button(QDialogButtonBox.StandardButton.Ok).setText("Senden")
+        self.buttonBox.button(QDialogButtonBox.StandardButton.Ok).setText("An medatixx senden")
+        # Praxis: PDF nur ansehen bzw. drucken, ohne Rueckschrieb
+        knopfAnsehen = self.buttonBox.addButton("PDF ansehen / drucken", QDialogButtonBox.ButtonRole.ActionRole)
+        knopfAnsehen.clicked.connect(lambda: self.done(ANSEHEN))
         self.buttonBox.button(QDialogButtonBox.StandardButton.Cancel).setText("Abbrechen")
         self.buttonBox.accepted.connect(self.accept) # type:ignore
         self.buttonBox.rejected.connect(self.reject) # type:ignore
@@ -80,7 +87,14 @@ class Trendanzeige(QDialog):
                     trendLayout.addWidget(spaceLabel, zeile, 0, 1, 3)
                     zeile += 2
         
-        dialogLayoutV.addLayout(trendLayout)
+        # Praxis: bei vielen Eintraegen scrollen statt das Fenster endlos zu vergroessern
+        inhalt = QWidget()
+        inhalt.setLayout(trendLayout)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setWidget(inhalt)
+        scroll.setMinimumSize(700, 450)
+        dialogLayoutV.addWidget(scroll)
         dialogLayoutV.addWidget(self.buttonBox)
 
         self.setLayout(dialogLayoutV)

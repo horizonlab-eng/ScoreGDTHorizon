@@ -52,7 +52,7 @@ class Trend:
         return trendElement
     
 class Test:
-    MAXIMALE_TRENDANZAHL = 3
+    MAXIMALE_TRENDANZAHL = 30 # Praxis: bisher 3
     def __init__(self, name:str, gruppe:str, tool:GdtTool):
         self.name = name
         self.gruppe = gruppe
@@ -83,7 +83,7 @@ class Test:
         # Gegebenenfalls Trends gleichen Datums löschen
         datum = trend.getTrend()["datum"]
         for i in range(len(self.datumListe) - 1, -1, -1):
-            if self.datumListe[i].date() == datum.date():
+            if self.datumListe[i] == datum: # Praxis: nur exakt gleicher Zeitpunkt ersetzt (bisher: gleicher Tag)
                 self.datumListe.pop(i)
                 self.ergebnisListe.pop(i)
                 self.interpretationListe.pop(i)

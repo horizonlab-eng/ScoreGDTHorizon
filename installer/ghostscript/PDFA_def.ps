@@ -1,0 +1,20 @@
+%!
+% PDF/A-2b-Definitionsdatei fuer ScoreGDT (Zweig "praxis")
+% Wird von praxis_pdf.alsPdfA an Ghostscript uebergeben.
+% Das sRGB-Farbprofil wird per -sICCProfile=<Pfad> uebergeben.
+
+/ICCProfile where { pop } { /ICCProfile (srgb.icc) def } ifelse
+
+[/_objdef {icc_PDFA} /type /stream /OBJ pdfmark
+[{icc_PDFA} << /N 3 >> /PUT pdfmark
+[{icc_PDFA} ICCProfile (r) file /PUT pdfmark
+
+[/_objdef {OutputIntent_PDFA} /type /dict /OBJ pdfmark
+[{OutputIntent_PDFA} <<
+  /Type /OutputIntent
+  /S /GTS_PDFA1
+  /DestOutputProfile {icc_PDFA}
+  /OutputConditionIdentifier (sRGB IEC61966-2.1)
+  /Info (sRGB IEC61966-2.1)
+>> /PUT pdfmark
+[{Catalog} << /OutputIntents [ {OutputIntent_PDFA} ] >> /PUT pdfmark

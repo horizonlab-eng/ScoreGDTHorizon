@@ -8,6 +8,13 @@ class scorepdf(FPDF):
     def __init__(self, orientation, unit, format, titel:str):
         super().__init__(orientation, unit, format)
         self.titel = titel
+        # Praxis: Raender passend zum Briefpapier (Einstellung "PDF und Briefpapier")
+        try:
+            import praxis_pdf
+            self.set_margins(10, praxis_pdf.oberRand(), 10)
+            self.set_auto_page_break(True, praxis_pdf.unterRand())
+        except Exception:
+            pass
 
     def header(self):
         #self.set_font("helvetica", "B", 20)

@@ -3,7 +3,7 @@ import xml.etree.ElementTree as ElementTree
 import requests
 import gdt, gdtzeile, class_part, class_widgets, class_score, farbe
 import praxis
-import praxis_personen, praxisStartfenster, dialogPraxisRollen
+import praxis_personen, praxisStartfenster, dialogPraxisRollen, praxis_pdf, dialogPraxisPdf
 import dialogUeberScoreGdt, dialogEinstellungenAllgemein, dialogEinstellungenGdt, dialogEinstellungenBenutzer, dialogEinstellungenLanrLizenzschluessel, dialogEula, dialogEinstellungenImportExport, dialogScoreAuswahl, dialogEinstellungenFavoriten, dialogStartargumentGenerieren
 import class_trends, dialogTrendanzeige
 import class_enums, class_Rechenoperation, scorepdf
@@ -491,7 +491,8 @@ class MainWindow(QMainWindow):
                                 ausgewaehlteTests = [class_trends.getTestAusXml(t) for t in ausgewaehlteTestXmls]
                                 ausgewaehlteTests = sorted(ausgewaehlteTests, key=lambda t:t.getName())
                                 dt = dialogTrendanzeige.Trendanzeige(ausgewaehlteTests)
-                                if dt.exec() == 1:
+                                trendErgebnis = dt.exec() # Praxis: 1 = an medatixx senden, 3 = PDF ansehen/drucken
+                                if trendErgebnis in (1, dialogTrendanzeige.ANSEHEN):
                                     heute = datetime.datetime.now()
                                     # GDT-Datei erzeugen
                                     sh = gdt.SatzHeader(gdt.Satzart.DATEN_EINER_UNTERSUCHUNG_UEBERMITTELN_6310, self.configIni["GDT"]["idpraxisedv"], self.configIni["GDT"]["idscoregdt"], self.zeichensatz, "2.10", "Fabian Treusch - GDT-Tools", "ScoreGDT", self.version, self.patId)
@@ -543,13 +544,23 @@ class MainWindow(QMainWindow):
                                                     trendPdf.multi_cell(45, 10, trend.getTrend()["ergebnis"], new_y="LAST")
                                                     trendPdf.multi_cell(0, 10, trend.getTrend()["interpretation"], new_x="LMARGIN", new_y="NEXT")
                                                 trendPdf.cell(0, 4, "", new_x="LMARGIN", new_y="NEXT")
-                                    trendPdf.set_y(-30)
+                                    trendPdf.set_y(-(praxis_pdf.unterRand() + 10)) # Praxis
                                     trendPdf.set_font("dejavu", "I", 10)
                                     trendPdf.cell(0, 10, "Generiert von ScoreGDT V" + self.version + " (\u00a9 GDT-Tools " + str(datetime.date.today().year) + ")", align="R")
+                                    if trendErgebnis == dialogTrendanzeige.ANSEHEN:
+                                        # Praxis: nur ansehen/drucken - PDF im PDF-Programm öffnen, nichts an medatixx
+                                        import tempfile
+                                        ansichtPfad = os.path.join(tempfile.gettempdir(), os.path.basename(trendPdfPfad))
+                                        if praxis.pdfSpeichern(trendPdf, ansichtPfad):
+                                            try:
+                                                os.startfile(ansichtPfad) # type: ignore
+                                            except Exception as e:
+                                                QMessageBox(QMessageBox.Icon.Warning, "Hinweis von ScoreGDT", "Das PDF wurde erstellt, konnte aber nicht geöffnet werden:\n" + ansichtPfad + "\n" + str(e), QMessageBox.StandardButton.Ok).exec()
                                     # Praxis: erst das PDF vollständig ablegen, danach die GDT-Datei
-                                    praxis.pdfSpeichern(trendPdf, trendPdfPfad)
+                                    elif not praxis.pdfSpeichern(trendPdf, trendPdfPfad):
+                                        QMessageBox(QMessageBox.Icon.Warning, "Hinweis von ScoreGDT", "Das PDF konnte nicht erstellt werden. Es wurde nichts an das Praxisverwaltungssystem gesendet.", QMessageBox.StandardButton.Ok).exec()
                                     # GDT-Datei exportieren
-                                    if not praxis.gdtSpeichern(gd, praxis.rueckschriebPfad(self.gdtExportVerzeichnis, self.kuerzelpraxisedv + self.kuerzelscoregdt, self.rueckschriebMitZeitstempel), self.zeichensatz):
+                                    elif not praxis.gdtSpeichern(gd, praxis.rueckschriebPfad(self.gdtExportVerzeichnis, self.kuerzelpraxisedv + self.kuerzelscoregdt, self.rueckschriebMitZeitstempel), self.zeichensatz):
                                         logger.logger.error("Fehler bei GDT-Dateiexport nach " + self.gdtExportVerzeichnis + "/" + self.kuerzelpraxisedv + self.kuerzelscoregdt + ".gdt")
                                         mb = QMessageBox(QMessageBox.Icon.Warning, "Hinweis von ScoreGDT", "GDT-Export nicht möglich.\nBitte überprüfen Sie die Angabe des Exportverzeichnisses.\nScoreGDT wird beendet.", QMessageBox.StandardButton.Ok)
                                         mb.exec()
@@ -1074,6 +1085,8 @@ class MainWindow(QMainWindow):
             einstellungenBenutzerAction.triggered.connect(lambda checked = False, neustartfrage = True: self.einstellungenBenutzer(checked, neustartfrage)) 
             einstellungenRollenAction = QAction("Rollen und Favoriten-Vorlagen", self) # Praxis
             einstellungenRollenAction.triggered.connect(self.rollenUndVorlagen)
+            einstellungenPdfAction = QAction("PDF und Briefpapier", self) # Praxis
+            einstellungenPdfAction.triggered.connect(self.pdfUndBriefpapier)
             hilfeMenu = menubar.addMenu("Hilfe")
             hilfeWikiAction = QAction("ScoreGDT Wiki", self)
             hilfeWikiAction.triggered.connect(self.scoregdtWiki)
@@ -1101,9 +1114,10 @@ class MainWindow(QMainWindow):
             einstellungenMenu.addAction(einstellungenGdtAction)
             einstellungenMenu.addAction(einstellungenBenutzerAction)
             einstellungenMenu.addAction(einstellungenRollenAction)
+            einstellungenMenu.addAction(einstellungenPdfAction)
             # Praxis: globale Einstellungen nur, wenn ScoreGDT "als Administrator ausgeführt" wird
             if not praxis_personen.istAdmin():
-                for adminAktion in (einstellungenAllgemeinAction, einstellungenGdtAction, einstellungenBenutzerAction, einstellungenRollenAction, scoreMenuFavoritenVerwaltenAction):
+                for adminAktion in (einstellungenAllgemeinAction, einstellungenGdtAction, einstellungenBenutzerAction, einstellungenRollenAction, einstellungenPdfAction, scoreMenuFavoritenVerwaltenAction):
                     adminAktion.setEnabled(False)
                     adminAktion.setText(adminAktion.text() + " (nur als Administrator)")
             hilfeMenu.addAction(hilfeWikiAction)
@@ -1823,13 +1837,17 @@ class MainWindow(QMainWindow):
                     pdf.cell(0, 6, "Kommentar:", new_x="LMARGIN", new_y="NEXT")
                     pdf.set_font(style="")  
                     pdf.cell(0, None, self.lineEditKommentar.text(), new_x="LMARGIN", new_y="NEXT")
-                pdf.set_y(-30)
+                pdf.set_y(-(praxis_pdf.unterRand() + 10)) # Praxis: Fußzeile oberhalb des Briefpapier-Rands
                 pdf.set_font("dejavu", "I", 10)
                 pdf.cell(0, None, "Generiert von ScoreGDT V" + self.version + " (\u00a9 GDT-Tools " + str(datetime.date.today().year) + ")", align="R")
                 logger.logger.info("PDF-Seite aufgebaut")
                 # Praxis: erst das PDF vollständig ablegen, danach die GDT-Datei
                 if praxis.pdfSpeichern(pdf, scorePdfPfad):
                     logger.logger.info("PDF-Output nach " + scorePdfPfad + " erfolgreich")
+                else:
+                    # Praxis: ohne PDF keinen Rückschrieb mit Verweis auf eine fehlende Datei senden
+                    QMessageBox(QMessageBox.Icon.Warning, "Hinweis von ScoreGDT", "Das PDF konnte nicht erstellt werden. Es wurde nichts an das Praxisverwaltungssystem gesendet.\nBitte erneut versuchen oder ohne PDF senden.", QMessageBox.StandardButton.Ok).exec()
+                    return
             befund = gdtname + ": " +  self.lineEditScoreErgebnis.text() + leerzeichenVorEinheit + self.labelScoreErgebnisEinheit.text() # type: ignore
             gd.addZeile("6220", befund)
             if self.erfuellteAuswertungsregel != -1:
@@ -1991,6 +2009,10 @@ class MainWindow(QMainWindow):
         """Praxis: Rollen, Favoriten-Vorlagen und Zuordnung der Personen (nur Administrator)."""
         dr = dialogPraxisRollen.RollenDialog(self.configPath, self.scoresPfad, self.benutzernamenListe, self.benutzerkuerzelListe)
         dr.exec()
+
+    def pdfUndBriefpapier(self, checked):
+        """Praxis: Briefpapier, Ränder und PDF/A (nur Administrator)."""
+        dialogPraxisPdf.PdfDialog().exec()
 
     def scoreFavoritenVerwalten(self, checked):
         df = dialogEinstellungenFavoriten.EinstellungenFavoriten(self.configPath, self.scoresPfad)

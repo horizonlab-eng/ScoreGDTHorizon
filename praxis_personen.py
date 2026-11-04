@@ -27,6 +27,7 @@ STANDARD = {
     "personStandardscore": {},  # Kuerzel -> Score-Name
     "zuletzt": {},              # "pc:<Arbeitsplatz>" bzw. "user:<Windows-Benutzer>" -> Kuerzel
     "vorauswahlUeber": VORAUSWAHL_FRAGEN,
+    "pdf": {},                  # PDF-Einstellungen (praxis_pdf.py)
 }
 
 

@@ -74,14 +74,22 @@ def gdtSpeichern(gdtDatei, zielPfad: str, zeichensatz) -> bool:
 
 
 def pdfSpeichern(fpdfObjekt, zielPfad: str) -> bool:
-    """Schreibt das PDF zuerst unter einem Hilfsnamen und benennt es dann um."""
+    """Schreibt das PDF zuerst unter einem Hilfsnamen, legt (falls vorhanden) das
+    Briefpapier darunter, wandelt es in PDF/A-2b um und benennt es dann um."""
     hilfsDatei = hilfsPfad(zielPfad)
     try:
         fpdfObjekt.output(hilfsDatei)
     except Exception as e:
         logger.logger.error("Fehler bei PDF-Output nach " + hilfsDatei + " (" + str(e) + ")")
         return False
-    return fertigstellen(hilfsDatei, zielPfad)
+    try:
+        import praxis_pdf
+        erledigt = praxis_pdf.fertigstellen(hilfsDatei, zielPfad)
+        logger.logger.warning("PDF erzeugt (" + (erledigt or "ohne Briefpapier/PDF-A") + ")")
+        return os.path.exists(zielPfad)
+    except Exception as e:
+        logger.logger.error("PDF-Fertigstellung fehlgeschlagen: " + str(e))
+        return fertigstellen(hilfsDatei, zielPfad) if os.path.exists(hilfsDatei) else os.path.exists(zielPfad)
 
 
 def aufraeumen(exportVerzeichnis: str):
