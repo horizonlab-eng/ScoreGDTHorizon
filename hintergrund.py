@@ -50,6 +50,15 @@ def sitzungsnummer() -> int:
     return 0
 
 
+def installierteVersion(basedir: str) -> str:
+    """Build-Kennung aus build.txt (z. B. v1.45.3-praxis-13), leer wenn nicht vorhanden."""
+    try:
+        with open(os.path.join(basedir, "build.txt"), "r", encoding="ascii", errors="ignore") as f:
+            return f.read().strip()
+    except Exception:
+        return ""
+
+
 def pipeName() -> str:
     return "ScoreGDT-" + str(sitzungsnummer())
 
@@ -305,8 +314,14 @@ class Hintergrund(QObject):
         if not QSystemTrayIcon.isSystemTrayAvailable():
             return
         self.tray = QSystemTrayIcon(QIcon(os.path.join(self.basedir, "icons", "program.png")), self)
-        self.tray.setToolTip("ScoreGDT ist bereit")
+        build = installierteVersion(self.basedir)
+        self.tray.setToolTip("ScoreGDT ist bereit" + (" (" + build + ")" if build else ""))
         menue = QMenu()
+        if build:
+            versionAktion = QAction("Version: " + build, menue)
+            versionAktion.setEnabled(False)
+            menue.addAction(versionAktion)
+            menue.addSeparator()
         beendenAktion = QAction("ScoreGDT im Hintergrund beenden", menue)
         beendenAktion.triggered.connect(self.wirklichBeenden)
         menue.addAction(beendenAktion)

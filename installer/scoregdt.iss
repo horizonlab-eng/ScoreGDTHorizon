@@ -60,6 +60,8 @@ Name: "{commonstartup}\ScoreGDT Ordner"; Filename: "powershell.exe"; Parameters:
 Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\ScoreGDT-Update.ps1"" -AufgabeEinrichten"; Flags: runhidden; Tasks: autoupdate
 Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\ScoreGDT-Update.ps1"" -AufgabeEntfernen"; Flags: runhidden; Tasks: not autoupdate
 Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\ScoreGDT-Ordner.ps1"""; Flags: runhidden
+; Etappe 5: ScoreGDT wurde zu Beginn in allen Sitzungen beendet - jetzt dort wieder im Hintergrund starten
+Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\ScoreGDT-Update.ps1"" -HintergrundStarten"; Flags: runhidden
 
 [UninstallRun]
 Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\ScoreGDT-Update.ps1"" -AufgabeEntfernen"; Flags: runhidden; RunOnceId: "ScoreGDTUpdateEntfernen"
