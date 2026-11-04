@@ -317,7 +317,7 @@ class EinheitToggle():
         zahlengrenzenAlsString = []
         for azg in self.aktuelleZahlengrenzen: 
             azgAlsString = "{:.1f}".format(azg)
-            zahlengrenzenAlsString.append(azgAlsString.replace(".", ",").replace(",0", ""))
+            zahlengrenzenAlsString.append(azgAlsString.replace(".", ",").removesuffix(",0"))
         return zahlengrenzenAlsString
     
     def toggle(self):

@@ -1,7 +1,4 @@
 import configparser, os, re
-## Nur mit Lizenz
-import gdttoolsL
-## /Nur mit Lizenz
 from PySide6.QtWidgets import (
     QDialogButtonBox,
     QDialog,

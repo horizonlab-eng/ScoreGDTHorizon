@@ -1,9 +1,6 @@
 import sys, configparser, os, datetime, shutil, logger, re, atexit, subprocess
 import xml.etree.ElementTree as ElementTree
 import requests
-## Nur mit Lizenz
-import gdttoolsL
-## /Nur mit Lizenz
 import gdt, gdtzeile, class_part, class_widgets, class_score, farbe
 import dialogUeberScoreGdt, dialogEinstellungenAllgemein, dialogEinstellungenGdt, dialogEinstellungenBenutzer, dialogEinstellungenLanrLizenzschluessel, dialogEula, dialogEinstellungenImportExport, dialogScoreAuswahl, dialogEinstellungenFavoriten, dialogStartargumentGenerieren
 import class_trends, dialogTrendanzeige
@@ -119,7 +116,7 @@ class MainWindow(QMainWindow):
         updateSafePath = ""
         if sys.platform == "win32":
             logger.logger.info("Plattform: win32")
-            updateSafePath = os.path.expanduser("~\\appdata\\local\\scoregdt")
+            updateSafePath = os.path.join(os.environ.get("PROGRAMDATA", "C:\\ProgramData"), "scoregdt")
         else:
             logger.logger.info("Plattform: nicht win32")
             updateSafePath = os.path.expanduser("~/.config/scoregdt")
@@ -153,8 +150,8 @@ class MainWindow(QMainWindow):
         self.version = self.configIni["Allgemein"]["version"]
         self.eulagelesen = self.configIni["Allgemein"]["eulagelesen"] == "True"
         self.bereichsgrenzenerzwingen = self.configIni["Allgemein"]["bereichsgrenzenerzwingen"] == "True"
-        self.gdtImportVerzeichnis = self.configIni["GDT"]["gdtimportverzeichnis"]
-        self.gdtExportVerzeichnis = self.configIni["GDT"]["gdtexportverzeichnis"]
+        self.gdtImportVerzeichnis = os.path.expandvars(self.configIni["GDT"]["gdtimportverzeichnis"])
+        self.gdtExportVerzeichnis = os.path.expandvars(self.configIni["GDT"]["gdtexportverzeichnis"])
         self.kuerzelscoregdt = self.configIni["GDT"]["kuerzelscoregdt"]
         self.kuerzelpraxisedv = self.configIni["GDT"]["kuerzelpraxisedv"]
         self.benutzernamenListe = self.configIni["Benutzer"]["namen"].split("::")
@@ -216,16 +213,6 @@ class MainWindow(QMainWindow):
         self.lanr = self.configIni["Erweiterungen"]["lanr"]
         self.lizenzschluessel = self.configIni["Erweiterungen"]["lizenzschluessel"]
 
-        ## Nur mit Lizenz
-        # Prüfen, ob Lizenzschlüssel unverschlüsselt
-        if len(self.lizenzschluessel) == 29:
-            logger.logger.info("Lizenzschlüssel unverschlüsselt")
-            self.configIni["Erweiterungen"]["lizenzschluessel"] = gdttoolsL.GdtToolsLizenzschluessel.krypt(self.lizenzschluessel)
-            with open(os.path.join(self.configPath, "config.ini"), "w", encoding="utf-8") as configfile:
-                    self.configIni.write(configfile)
-        else:
-            self.lizenzschluessel = gdttoolsL.GdtToolsLizenzschluessel.dekrypt(self.lizenzschluessel)
-        ## /Nur mit Lizenz
 
         # Prüfen, ob EULA gelesen
         if not self.eulagelesen:
@@ -286,9 +273,6 @@ class MainWindow(QMainWindow):
             mb = QMessageBox(QMessageBox.Icon.Question, "Hinweis von ScoreGDT", "Vermutlich starten Sie ScoreGDT das erste Mal auf diesem PC.\nMöchten Sie jetzt die Grundeinstellungen vornehmen?", QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
             mb.setDefaultButton(QMessageBox.StandardButton.Yes)
             if mb.exec() == QMessageBox.StandardButton.Yes:
-                ## Nur mit Lizenz
-                self.einstellungenLanrLizenzschluessel(False, False)
-                ## /Nur mit Lizenz
                 self.einstellungenGdt(False, False)
                 self.einstellungenBenutzer(False, False)
                 self.einstellungenAllgemein(False, False)
@@ -369,21 +353,6 @@ class MainWindow(QMainWindow):
 
         self.addOnsFreigeschaltet = True
 
-        ## Nur mit Lizenz
-        # Pseudo-Lizenz?
-        self.pseudoLizenzId = ""
-        rePatId = r"^patid\d+$"
-        for arg in sys.argv:
-            if re.match(rePatId, arg) != None:
-                logger.logger.info("Pseudo-Lizenz mit id " + arg[5:])
-                self.pseudoLizenzId = arg[5:]
-
-        # Add-Ons freigeschaltet?
-        self.addOnsFreigeschaltet = gdttoolsL.GdtToolsLizenzschluessel.lizenzErteilt(self.lizenzschluessel, self.lanr, gdttoolsL.SoftwareId.SCOREGDT) or gdttoolsL.GdtToolsLizenzschluessel.lizenzErteilt(self.lizenzschluessel, self.lanr, gdttoolsL.SoftwareId.SCOREGDTPSEUDO) and self.pseudoLizenzId != ""
-        if self.lizenzschluessel != "" and gdttoolsL.GdtToolsLizenzschluessel.getSoftwareId(self.lizenzschluessel) == gdttoolsL.SoftwareId.SCOREGDTPSEUDO and self.pseudoLizenzId == "":
-            mb = QMessageBox(QMessageBox.Icon.Warning, "Hinweis von ScoreGDT", "Bei Verwendung einer Pseudolizenz muss ScoreGDT mit einer Patienten-Id als Startargument im Format \"patid<Pat.-Id>\" ausgeführt werden.", QMessageBox.StandardButton.Ok)
-            mb.exec() 
-        ## /Nur mit Lizenz
         
         jahr = datetime.datetime.now().year
         copyrightJahre = "2024"
@@ -424,11 +393,6 @@ class MainWindow(QMainWindow):
             self.patId = str(gd.getInhalt("3000"))
             self.name = str(gd.getInhalt("3102")) + " " + str(gd.getInhalt("3101"))
             logger.logger.info("PatientIn " + self.name + " (ID: " + self.patId + ") geladen")
-            ## Nur mit Lizenz
-            if self.pseudoLizenzId != "":
-                self.patId = self.pseudoLizenzId
-                logger.logger.info("PatId wegen Pseudolizenz auf " + self.pseudoLizenzId + " gesetzt")
-            ## /Nur mit Lizenz
             self.geburtsdatum = str(gd.getInhalt("3103"))[0:2] + "." + str(gd.getInhalt("3103"))[2:4] + "." + str(gd.getInhalt("3103"))[4:8]
             self.geschlecht = str(gd.getInhalt("3110")) # 1=männlich, 2=weiblich
             logger.logger.info("Geschlecht aus PVS-GDT (3110): " + self.geschlecht)
@@ -809,9 +773,9 @@ class MainWindow(QMainWindow):
                                     einheitUndErklärung += "\u003e"
                                 elif zahlengrenzenDict[zahlengrenzenList[0]] == class_enums.Regelarten.GROESSERGLEICHALS:
                                     einheitUndErklärung += "\u2265"
-                                einheitUndErklärung += str(zahlengrenzenList[0]).replace(".", ",").replace(",0", "") + " " + widget.getEinheit()
+                                einheitUndErklärung += str(zahlengrenzenList[0]).replace(".", ",").removesuffix(",0") + " " + widget.getEinheit()
                             else:
-                                einheitUndErklärung += str(zahlengrenzenList[0]).replace(".", ",").replace(",0", "") + "-" + str(zahlengrenzenList[1]).replace(".", ",").replace(",0", "") + " " + widget.getEinheit()
+                                einheitUndErklärung += str(zahlengrenzenList[0]).replace(".", ",").removesuffix(",0") + "-" + str(zahlengrenzenList[1]).replace(".", ",").removesuffix(",0") + " " + widget.getEinheit()
                             if einheitUndErklärung[len(einheitUndErklärung) - 1] == " ":
                                 einheitUndErklärung = einheitUndErklärung[:len(einheitUndErklärung) - 1]
                             einheitUndErklärung += ")"
@@ -1011,10 +975,6 @@ class MainWindow(QMainWindow):
 
             if not self.updatepruefungErfolgreich:
                 mainLayoutV.addWidget(self.labelAutoUpdatepruefungNichtErfolgreich, alignment=Qt.AlignmentFlag.AlignCenter)
-            ## Nur mit Lizenz
-            if self.addOnsFreigeschaltet and gdttoolsL.GdtToolsLizenzschluessel.getSoftwareId(self.lizenzschluessel) == gdttoolsL.SoftwareId.SCOREGDTPSEUDO:
-                mainLayoutV.addWidget(self.labelPseudolizenz, alignment=Qt.AlignmentFlag.AlignCenter)
-            ## /Nur mit Lizenz
             mainLayoutV.addWidget(groupboxPatientendaten)
             mainLayoutV.addWidget(labelScoreName, alignment=Qt.AlignmentFlag.AlignCenter)
             if self.scoreRoot.find("information") != None: #type: ignore
@@ -1054,17 +1014,6 @@ class MainWindow(QMainWindow):
             mainLayoutV.addLayout(kommentarfeldLayout)
             mainLayoutV.addLayout(datumBenutzerLayoutG)
             mainLayoutV.addLayout(layoutPdfErstellenDatenSendenH)
-            ## Nur mit Lizenz
-            if self.addOnsFreigeschaltet:
-                gueltigeLizenztage = gdttoolsL.GdtToolsLizenzschluessel.nochTageGueltig(self.lizenzschluessel)
-                if gueltigeLizenztage  > 0 and gueltigeLizenztage <= 30:
-                    labelLizenzLaeuftAus = QLabel("Die genutzte Lizenz ist noch " + str(gueltigeLizenztage) + " Tage gültig.")
-                    labelLizenzLaeuftAus.setPalette(farbe.getTextPalette(farbe.farben.ROT, self.palette()))
-                    mainLayoutV.addWidget(labelLizenzLaeuftAus, alignment=Qt.AlignmentFlag.AlignCenter)
-            else:
-                self.pushButtonSenden.setEnabled(False)
-                self.pushButtonSenden.setText("Keine gültige Lizenz")
-            ## /Nur mit Lizenz
             self.widget.setLayout(mainLayoutV)
             self.setCentralWidget(self.widget)
 
@@ -1092,13 +1041,6 @@ class MainWindow(QMainWindow):
             einstellungenGdtAction.triggered.connect(lambda checked = False, neustartfrage = True: self.einstellungenGdt(checked, neustartfrage))
             einstellungenBenutzerAction = QAction("BenutzerInnen verwalten", self)
             einstellungenBenutzerAction.triggered.connect(lambda checked = False, neustartfrage = True: self.einstellungenBenutzer(checked, neustartfrage)) 
-            ## Nur mit Lizenz
-            einstellungenErweiterungenAction = QAction("LANR/Lizenzschlüssel", self)
-            einstellungenErweiterungenAction.triggered.connect(lambda checked = False, neustartfrage = True: self.einstellungenLanrLizenzschluessel(checked, neustartfrage)) 
-            einstellungenImportExportAction = QAction("Im- /Exportieren", self)
-            einstellungenImportExportAction.triggered.connect(self.einstellungenImportExport) 
-            einstellungenImportExportAction.setMenuRole(QAction.MenuRole.NoRole)
-            ## /Nur mit Lizenz
             hilfeMenu = menubar.addMenu("Hilfe")
             hilfeWikiAction = QAction("ScoreGDT Wiki", self)
             hilfeWikiAction.triggered.connect(self.scoregdtWiki)
@@ -1124,10 +1066,6 @@ class MainWindow(QMainWindow):
             einstellungenMenu.addAction(einstellungenAllgemeinAction)
             einstellungenMenu.addAction(einstellungenGdtAction)
             einstellungenMenu.addAction(einstellungenBenutzerAction)
-            ## Nur mit Lizenz
-            einstellungenMenu.addAction(einstellungenErweiterungenAction)
-            einstellungenMenu.addAction(einstellungenImportExportAction)
-            ## /Nur mit Lizenz
             hilfeMenu.addAction(hilfeWikiAction)
             hilfeMenu.addSeparator()
             hilfeMenu.addAction(hilfeUpdateAction)
@@ -1373,7 +1311,7 @@ class MainWindow(QMainWindow):
                 elif not self.bereichsgrenzenerzwingen and widget.zahlengrenzeGesetzt():
                     if not widget.zahlengrenzregelnErfuellt():
                         zahl = float(widget.getQt().text().replace(",", "."))
-                        grenzzahl = "{:.1f}".format(widget.getGrenzzahl(zahl)).replace(".", ",").replace(",0", "")
+                        grenzzahl = "{:.1f}".format(widget.getGrenzzahl(zahl)).replace(".", ",").removesuffix(",0")
                         widget.getQt().setText(grenzzahl)
                         mb = QMessageBox(QMessageBox.Icon.Information, "Hinweis von ScoreGDT", "Textfeld " + widget.getTitel() + " ungültig ausgefüllt. Der Wert wird auf " + grenzzahl + " gesetzt.", QMessageBox.StandardButton.Ok)
                         mb.exec()
@@ -1725,7 +1663,7 @@ class MainWindow(QMainWindow):
             logger.logger.info("Satzheader 6310 erzeugt")
             untersuchungsdatum = "{:>02}".format(str(self.dateEditUntersuchungsdatum.date().day())) + "{:>02}".format(str(self.dateEditUntersuchungsdatum.date().month())) + str(self.dateEditUntersuchungsdatum.date().year())
             jetzt = QTime().currentTime()
-            uhrzeit = "{:>02}".format(str(jetzt.hour())) + "{:>02}".format(str(jetzt.minute())) + str(jetzt.second())
+            uhrzeit = "{:>02}".format(str(jetzt.hour())) + "{:>02}".format(str(jetzt.minute())) + "{:>02}".format(str(jetzt.second()))
             logger.logger.info("Untersuchungsdatum/ -uhrzeit festgelegt")
             gd.addZeile("6200", untersuchungsdatum)
             gd.addZeile("6201", uhrzeit)
@@ -1770,7 +1708,7 @@ class MainWindow(QMainWindow):
                         partTitel += ": "
                     test = None
                     if widget.getTyp() == class_widgets.WidgetTyp.LINEEDIT:
-                        test = gdt.GdtTest("ScoreGDT" + "_" + widget.getId(), self.fuerGdtBereinigen(partTitel + widget.getTitel()), widget.getWertOhneFaktor().replace(".", ",").replace(",0", ""), widget.getEinheit(self.einheitToggles)) # type: ignore
+                        test = gdt.GdtTest("ScoreGDT" + "_" + widget.getId(), self.fuerGdtBereinigen(partTitel + widget.getTitel()), widget.getWertOhneFaktor().replace(".", ",").removesuffix(",0"), widget.getEinheit(self.einheitToggles)) # type: ignore
                     elif widget.getTyp() == class_widgets.WidgetTyp.RADIOBUTTON:
                         if widget.getQt().isChecked():
                             test = gdt.GdtTest("ScoreGDT" + "_" + widget.getId(), self.fuerGdtBereinigen(partTitel[:-2]), self.fuerGdtBereinigen(widget.getTitel()), self.fuerGdtBereinigen(widget.getEinheit())) # type: ignore
@@ -1780,7 +1718,7 @@ class MainWindow(QMainWindow):
                         patternZahl = r"^\d+$"
                         wert = "0"
                         if widget.getQt().isChecked():
-                            wert = widget.getWert().replace(".", ",").replace(",0", "")
+                            wert = widget.getWert().replace(".", ",").removesuffix(",0")
                         if re.match(patternZahl, wert) != None:
                             if wert == "0":
                                 wert = "Nein"
@@ -1788,7 +1726,7 @@ class MainWindow(QMainWindow):
                                 wert = "Ja"
                         test = gdt.GdtTest("ScoreGDT" + "_" + widget.getId(), self.fuerGdtBereinigen(partTitel + widget.getTitel()), wert, self.fuerGdtBereinigen(widget.getEinheit())) # type: ignore
                     else:
-                        test = gdt.GdtTest("ScoreGDT" + "_" + widget.getId(), self.fuerGdtBereinigen(partTitel + widget.getTitel()), widget.getWert().replace(".", ",").replace(",0", ""), self.fuerGdtBereinigen(widget.getEinheit())) # type: ignore
+                        test = gdt.GdtTest("ScoreGDT" + "_" + widget.getId(), self.fuerGdtBereinigen(partTitel + widget.getTitel()), widget.getWert().replace(".", ",").removesuffix(",0"), self.fuerGdtBereinigen(widget.getEinheit())) # type: ignore
                     if test != None:
                         gd.addTest(test)
                         if self.pdferzeugen and pdf != None and len(self.pdfZeilen) == 0: # type: ignore
@@ -2060,27 +1998,6 @@ class MainWindow(QMainWindow):
                 if mb.exec() == QMessageBox.StandardButton.Yes:
                     os.execl(sys.executable, __file__, *sys.argv)
 
-    ## Nur mit Lizenz
-    def einstellungenLanrLizenzschluessel(self, checked, neustartfrage):
-        de = dialogEinstellungenLanrLizenzschluessel.EinstellungenProgrammerweiterungen(self.configPath)
-        if de.exec() == 1:
-            self.configIni["Erweiterungen"]["lanr"] = de.lineEditLanr.text()
-            self.configIni["Erweiterungen"]["lizenzschluessel"] = gdttoolsL.GdtToolsLizenzschluessel.krypt(de.lineEditLizenzschluessel.text())
-            with open(os.path.join(self.configPath, "config.ini"), "w", encoding="utf-8") as configfile:
-                self.configIni.write(configfile)
-            if neustartfrage:
-                mb = QMessageBox(QMessageBox.Icon.Question, "Hinweis von ScoreGDT", "Damit die Einstellungsänderungen wirksam werden, sollte ScoreGDT neu gestartet werden.\nSoll ScoreGDT  jetzt neu gestartet werden?", QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
-                mb.setDefaultButton(QMessageBox.StandardButton.Yes)
-                mb.button(QMessageBox.StandardButton.Yes).setText("Ja")
-                mb.button(QMessageBox.StandardButton.No).setText("Nein")
-                if mb.exec() == QMessageBox.StandardButton.Yes:
-                    os.execl(sys.executable, __file__, *sys.argv)
-
-    def einstellungenImportExport(self):
-        de = dialogEinstellungenImportExport.EinstellungenImportExport(self.configPath)
-        if de.exec() == 1:
-            pass
-    ## /Nur mit Lizenz
     
     def scoregdtWiki(self, link):
         QDesktopServices.openUrl("https://github.com/retconx/scoregdt/wiki")
