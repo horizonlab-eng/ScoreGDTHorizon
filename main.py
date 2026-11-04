@@ -3,6 +3,7 @@ import xml.etree.ElementTree as ElementTree
 import requests
 import gdt, gdtzeile, class_part, class_widgets, class_score, farbe
 import praxis
+import praxis_personen, praxisStartfenster, dialogPraxisRollen
 import dialogUeberScoreGdt, dialogEinstellungenAllgemein, dialogEinstellungenGdt, dialogEinstellungenBenutzer, dialogEinstellungenLanrLizenzschluessel, dialogEula, dialogEinstellungenImportExport, dialogScoreAuswahl, dialogEinstellungenFavoriten, dialogStartargumentGenerieren
 import class_trends, dialogTrendanzeige
 import class_enums, class_Rechenoperation, scorepdf
@@ -427,7 +428,7 @@ class MainWindow(QMainWindow):
                     logger.logger.warning("Updateprüfung nicht möglich: " + str(e))
 
             # Mitteilung, dass neue Scores
-            if self.neueScores:
+            if self.neueScores and praxis_personen.istAdmin(): # Praxis: Praxis-Favoriten nur als Administrator
                 mb = QMessageBox(QMessageBox.Icon.Question, "Hinweis von ScoreGDT", "Neue Scores stehen zur Verfügung. Zur Nutzung müssen diese Aktiviert werden.\nSoll die Score-Verwaltung angezeigt werden?", QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
                 mb.setDefaultButton(QMessageBox.StandardButton.Yes)
                 mb.button(QMessageBox.StandardButton.Yes).setText("Ja")
@@ -455,9 +456,21 @@ class MainWindow(QMainWindow):
                             if self.scoreRoot != None:
                                 scoreAlsStartargument = True
                     auswahlOk = False
+                    # Praxis: Person vorauswählen (zuletzt an diesem Arbeitsplatz), Startfenster mit ihren Favoriten
+                    self.aktuelleBenutzernummer = praxis_personen.vorauswahl(self.configPath, self.benutzerkuerzelListe, self.aktuelleBenutzernummer)
                     if not scoreAlsStartargument:
-                        ds = dialogScoreAuswahl.ScoreAuswahl(self.root, self.standardscore, self.configPath, self.patId)
-                        auswahlOk = ds.exec() == 1
+                        personIndex = self.aktuelleBenutzernummer
+                        while True:
+                            ds = praxisStartfenster.Startfenster(self.configPath, self.scoresPfad, self.patId, self.name + " (* " + self.geburtsdatum + ")", self.benutzernamenListe, self.benutzerkuerzelListe, personIndex, self.standardscore)
+                            ergebnis = ds.exec()
+                            if ergebnis == praxisStartfenster.NEU_OEFFNEN and ds.neuerPersonIndex is not None:
+                                personIndex = ds.neuerPersonIndex
+                                continue
+                            break
+                        auswahlOk = ergebnis == 1
+                        self.aktuelleBenutzernummer = personIndex
+                        if auswahlOk and personIndex < len(self.benutzerkuerzelListe):
+                            praxis_personen.merken(self.configPath, self.benutzerkuerzelListe[personIndex])
                     if scoreAlsStartargument or auswahlOk:
                         if scoreAlsStartargument:
                             logger.logger.info("Score " + sys.argv[1] + " als Startargument")
@@ -1039,7 +1052,9 @@ class MainWindow(QMainWindow):
             scoreMenu = menubar.addMenu("Score")
             scoreMenuAuswaehlenAction = QAction("Score auswählen (Neustart)", self)
             scoreMenuAuswaehlenAction.triggered.connect(self.scoreAuswaehlen)
-            scoreMenuFavoritenVerwaltenAction = QAction("Favoriten verwalten", self)
+            scoreMenuMeineFavoritenAction = QAction("Meine Favoriten bearbeiten", self) # Praxis
+            scoreMenuMeineFavoritenAction.triggered.connect(self.meineFavoritenBearbeiten)
+            scoreMenuFavoritenVerwaltenAction = QAction("Praxis-Favoriten (Vorgabe) verwalten", self)
             scoreMenuFavoritenVerwaltenAction.triggered.connect(self.scoreFavoritenVerwalten)
             startargumentFuerDirektstartGenerierenAction = QAction("Startargument für Programmstart mit Score generieren", self)
             startargumentFuerDirektstartGenerierenAction.triggered.connect(self.startargumentFuerDirektstartGenerieren)
@@ -1051,6 +1066,8 @@ class MainWindow(QMainWindow):
             einstellungenGdtAction.triggered.connect(lambda checked = False, neustartfrage = True: self.einstellungenGdt(checked, neustartfrage))
             einstellungenBenutzerAction = QAction("BenutzerInnen verwalten", self)
             einstellungenBenutzerAction.triggered.connect(lambda checked = False, neustartfrage = True: self.einstellungenBenutzer(checked, neustartfrage)) 
+            einstellungenRollenAction = QAction("Rollen und Favoriten-Vorlagen", self) # Praxis
+            einstellungenRollenAction.triggered.connect(self.rollenUndVorlagen)
             hilfeMenu = menubar.addMenu("Hilfe")
             hilfeWikiAction = QAction("ScoreGDT Wiki", self)
             hilfeWikiAction.triggered.connect(self.scoregdtWiki)
@@ -1071,11 +1088,18 @@ class MainWindow(QMainWindow):
             anwendungMenu.addAction(aboutAction)
             anwendungMenu.addAction(updateAction)
             scoreMenu.addAction(scoreMenuAuswaehlenAction)
+            scoreMenu.addAction(scoreMenuMeineFavoritenAction)
             scoreMenu.addAction(scoreMenuFavoritenVerwaltenAction)
             scoreMenu.addAction(startargumentFuerDirektstartGenerierenAction)
             einstellungenMenu.addAction(einstellungenAllgemeinAction)
             einstellungenMenu.addAction(einstellungenGdtAction)
             einstellungenMenu.addAction(einstellungenBenutzerAction)
+            einstellungenMenu.addAction(einstellungenRollenAction)
+            # Praxis: globale Einstellungen nur, wenn ScoreGDT "als Administrator ausgeführt" wird
+            if not praxis_personen.istAdmin():
+                for adminAktion in (einstellungenAllgemeinAction, einstellungenGdtAction, einstellungenBenutzerAction, einstellungenRollenAction, scoreMenuFavoritenVerwaltenAction):
+                    adminAktion.setEnabled(False)
+                    adminAktion.setText(adminAktion.text() + " (nur als Administrator)")
             hilfeMenu.addAction(hilfeWikiAction)
             hilfeMenu.addSeparator()
             hilfeMenu.addAction(hilfeUpdateAction)
@@ -1816,6 +1840,8 @@ class MainWindow(QMainWindow):
             else: 
                 self.configIni["Allgemein"]["pdferzeugen"] = str(self.pdferzeugen)
                 self.configIni["Benutzer"]["letzter"] = str(self.aktuelleBenutzernummer)
+                if self.aktuelleBenutzernummer < len(self.benutzerkuerzelListe): # Praxis: Person für diesen Arbeitsplatz merken
+                    praxis_personen.merken(self.configPath, self.benutzerkuerzelListe[self.aktuelleBenutzernummer])
                 try:
                     with open(os.path.join(self.configPath, "config.ini"), "w", encoding="utf-8") as configfile:
                         self.configIni.write(configfile)
@@ -1942,6 +1968,23 @@ class MainWindow(QMainWindow):
             clipboard.setText("stsc:" + gdtname.replace(" ", "_").replace("(", "{").replace(")", "}") + "_" + dsg.lineEditAlternativeGdtId.text())
             mb = QMessageBox(QMessageBox.Icon.Information, "Hinweis von ScoreGDT", "\"" + "stsc:" + gdtname.replace(" ", "_").replace("(", "{").replace(")", "}") + "_" + dsg.lineEditAlternativeGdtId.text() + "\" wurde in die Zwischenablage kopiert und kann in den GDT-Einstellungen des Praxisverwaltungssystem als Startargument für ScoreGDT angegeben werden.", QMessageBox.StandardButton.Ok)
             mb.exec()
+
+    def meineFavoritenBearbeiten(self, checked):
+        """Praxis: Favoriten der im Fenster gewählten Person bearbeiten."""
+        nr = self.comboBoxBenutzer.currentIndex() if hasattr(self, "comboBoxBenutzer") else self.aktuelleBenutzernummer
+        if not (0 <= nr < len(self.benutzerkuerzelListe)):
+            return
+        kuerzel = self.benutzerkuerzelListe[nr]
+        rolle = praxis_personen.laden(self.configPath)["personRolle"].get(kuerzel, "")
+        ordner = praxis_personen.personFavoritenOrdner(self.configPath, kuerzel, rolle)
+        df = dialogEinstellungenFavoriten.EinstellungenFavoriten(ordner, self.scoresPfad)
+        df.setWindowTitle("Meine Favoriten – " + self.benutzernamenListe[nr])
+        df.exec()
+
+    def rollenUndVorlagen(self, checked):
+        """Praxis: Rollen, Favoriten-Vorlagen und Zuordnung der Personen (nur Administrator)."""
+        dr = dialogPraxisRollen.RollenDialog(self.configPath, self.scoresPfad, self.benutzernamenListe, self.benutzerkuerzelListe)
+        dr.exec()
 
     def scoreFavoritenVerwalten(self, checked):
         df = dialogEinstellungenFavoriten.EinstellungenFavoriten(self.configPath, self.scoresPfad)

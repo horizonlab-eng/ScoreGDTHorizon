@@ -41,6 +41,12 @@ jobs:
           python -m pip install --upgrade pip
           pip install pyside6 fpdf2 requests pyinstaller
 
+      - name: Oberflächentest (Praxis-Fenster, ohne Bildschirm)
+        env:
+          QT_QPA_PLATFORM: offscreen
+          PYTHONIOENCODING: utf-8
+        run: python tests/oberflaechentest.py
+
       - name: Sicherheitsprüfung und Versionskennung
         shell: python
         run: |
