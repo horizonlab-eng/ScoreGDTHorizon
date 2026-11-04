@@ -109,14 +109,37 @@ def alsPdfA(eingabe: str, ausgabe: str) -> bool:
         return False
 
 
-def istPdfA(pfad: str) -> bool:
-    """Grobe Pruefung: Datei traegt die PDF/A-2-Kennung in den XMP-Metadaten."""
+def pdfaKennung(pfad: str) -> dict:
+    """Liest aus dem PDF: PDF/A-Teil und -Stufe (XMP-Metadaten) und ob ein
+    PDF/A-OutputIntent mit Farbprofil vorhanden ist."""
+    import re
+    ergebnis = {"part": "", "conformance": "", "outputIntent": False}
     try:
-        with open(pfad, "rb") as f:
-            daten = f.read()
-        return (b"pdfaid:part>2<" in daten or b'pdfaid:part="2"' in daten) and b"GTS_PDFA" in daten
+        from pypdf import PdfReader
+        root = PdfReader(pfad).trailer["/Root"]
+        meta = root.get("/Metadata")
+        xmp = meta.get_object().get_data() if meta is not None else b""
+        intents = root.get("/OutputIntents") or []
+        for oi in intents:
+            oi = oi.get_object()
+            if str(oi.get("/S")) == "/GTS_PDFA1" and oi.get("/DestOutputProfile") is not None:
+                ergebnis["outputIntent"] = True
     except Exception:
-        return False
+        with open(pfad, "rb") as f:
+            xmp = f.read()
+    m = re.search(rb"pdfaid:part\s*(?:=\s*['\"]|>)\s*(\d)", xmp)
+    if m:
+        ergebnis["part"] = m.group(1).decode()
+    m = re.search(rb"pdfaid:conformance\s*(?:=\s*['\"]|>)\s*([A-Za-z])", xmp)
+    if m:
+        ergebnis["conformance"] = m.group(1).decode().upper()
+    return ergebnis
+
+
+def istPdfA(pfad: str) -> bool:
+    """True, wenn das PDF als PDF/A-2 gekennzeichnet ist und ein PDF/A-Farbprofil traegt."""
+    k = pdfaKennung(pfad)
+    return k["part"] == "2" and k["outputIntent"]
 
 
 # ---------- Briefpapier ----------

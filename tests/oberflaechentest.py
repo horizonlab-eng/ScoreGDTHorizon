@@ -130,7 +130,9 @@ pruefe(bool(praxis_pdf.ghostscriptProgramm()), "Ghostscript gefunden: " + str(pr
 roh = os.path.join(cfg, "_roh1.tmp"); ziel = os.path.join(cfg, "a.pdf")
 beispielPdf(roh)
 erledigt = praxis_pdf.fertigstellen(roh, ziel, briefpapier="", pdfa=True)
+print("        PDF/A-Kennung:", praxis_pdf.pdfaKennung(ziel))
 pruefe("PDF/A" in erledigt and praxis_pdf.istPdfA(ziel), "PDF/A-2b erzeugt (" + erledigt + ")")
+pruefe(praxis_pdf.pdfaKennung(ziel)["conformance"] == "B", "PDF/A-Stufe B (PDF/A-2b)")
 pruefe(not os.path.exists(roh), "Roh-PDF wird aufgeräumt")
 
 from fpdf import FPDF
