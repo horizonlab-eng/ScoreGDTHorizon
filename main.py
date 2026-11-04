@@ -2,6 +2,7 @@ import sys, configparser, os, datetime, shutil, logger, re, atexit, subprocess
 import xml.etree.ElementTree as ElementTree
 import requests
 import gdt, gdtzeile, class_part, class_widgets, class_score, farbe
+import praxis
 import dialogUeberScoreGdt, dialogEinstellungenAllgemein, dialogEinstellungenGdt, dialogEinstellungenBenutzer, dialogEinstellungenLanrLizenzschluessel, dialogEula, dialogEinstellungenImportExport, dialogScoreAuswahl, dialogEinstellungenFavoriten, dialogStartargumentGenerieren
 import class_trends, dialogTrendanzeige
 import class_enums, class_Rechenoperation, scorepdf
@@ -152,6 +153,11 @@ class MainWindow(QMainWindow):
         self.bereichsgrenzenerzwingen = self.configIni["Allgemein"]["bereichsgrenzenerzwingen"] == "True"
         self.gdtImportVerzeichnis = os.path.expandvars(self.configIni["GDT"]["gdtimportverzeichnis"])
         self.gdtExportVerzeichnis = os.path.expandvars(self.configIni["GDT"]["gdtexportverzeichnis"])
+        # Praxis: persönliche Austauschordner anlegen und alte PDFs/Hilfsdateien aufräumen
+        praxis.ordnerAnlegen(self.gdtImportVerzeichnis, self.gdtExportVerzeichnis)
+        praxis.aufraeumen(self.gdtExportVerzeichnis)
+        # Praxis: Rückschrieb mit Zeitstempel als Endung (in medatixx: "MEDASCOR.*")
+        self.rueckschriebMitZeitstempel = self.configIni.getboolean("Praxis", "rueckschriebmitzeitstempel", fallback=True)
         self.kuerzelscoregdt = self.configIni["GDT"]["kuerzelscoregdt"]
         self.kuerzelpraxisedv = self.configIni["GDT"]["kuerzelpraxisedv"]
         self.benutzernamenListe = self.configIni["Benutzer"]["namen"].split("::")
@@ -396,6 +402,8 @@ class MainWindow(QMainWindow):
             self.geburtsdatum = str(gd.getInhalt("3103"))[0:2] + "." + str(gd.getInhalt("3103"))[2:4] + "." + str(gd.getInhalt("3103"))[4:8]
             self.geschlecht = str(gd.getInhalt("3110")) # 1=männlich, 2=weiblich
             logger.logger.info("Geschlecht aus PVS-GDT (3110): " + self.geschlecht)
+            # Praxis: Anfrage beim Beenden löschen, damit sie nicht später versehentlich erneut geöffnet wird
+            atexit.register(praxis.anfrageLoeschen, os.path.join(self.gdtImportVerzeichnis, self.kuerzelscoregdt + self.kuerzelpraxisedv + ".gdt"))
         except (IOError, gdtzeile.GdtFehlerException) as e:
             logger.logger.warning("Fehler beim Laden der GDT-Datei: " + str(e))
             mb = QMessageBox(QMessageBox.Icon.Information, "Hinweis von ScoreGDT", "Fehler beim Laden der GDT-Datei:\n" + str(e) + "\n\nDieser Fehler hat in der Regel eine der folgenden Ursachen:\n- Die im PVS und in ScoreGDT konfigurierten GDT-Austauschverzeichnisse stimmen nicht überein.\n- ScoreGDT wurde nicht aus dem PVS heraus gestartet, so dass keine vom PVS erzeugte GDT-Datei gefunden werden konnte.\n\nSoll ScoreGDT dennoch geöffnet werden?", QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
@@ -478,7 +486,8 @@ class MainWindow(QMainWindow):
                                     gd.addZeile("6302", "trendpdf")
                                     gd.addZeile("6303", "pdf")
                                     gd.addZeile("6304", "Score-Trend")
-                                    gd.addZeile("6305", os.path.join(basedir, "pdf/trend_temp.pdf"))
+                                    trendPdfPfad = praxis.pdfPfad(self.gdtExportVerzeichnis, "trend", self.patId)
+                                    gd.addZeile("6305", trendPdfPfad)
                                     # PDF erzeugen
                                     # Kopf
                                     if len(ausgewaehlteTests) > 1:
@@ -518,9 +527,10 @@ class MainWindow(QMainWindow):
                                     trendPdf.set_y(-30)
                                     trendPdf.set_font("dejavu", "I", 10)
                                     trendPdf.cell(0, 10, "Generiert von ScoreGDT V" + self.version + " (\u00a9 GDT-Tools " + str(datetime.date.today().year) + ")", align="R")
-                                    trendPdf.output(os.path.join(basedir, "pdf/trend_temp.pdf"))
+                                    # Praxis: erst das PDF vollständig ablegen, danach die GDT-Datei
+                                    praxis.pdfSpeichern(trendPdf, trendPdfPfad)
                                     # GDT-Datei exportieren
-                                    if not gd.speichern(os.path.join(self.gdtExportVerzeichnis, self.kuerzelpraxisedv + self.kuerzelscoregdt + ".gdt"), self.zeichensatz):
+                                    if not praxis.gdtSpeichern(gd, praxis.rueckschriebPfad(self.gdtExportVerzeichnis, self.kuerzelpraxisedv + self.kuerzelscoregdt, self.rueckschriebMitZeitstempel), self.zeichensatz):
                                         logger.logger.error("Fehler bei GDT-Dateiexport nach " + self.gdtExportVerzeichnis + "/" + self.kuerzelpraxisedv + self.kuerzelscoregdt + ".gdt")
                                         mb = QMessageBox(QMessageBox.Icon.Warning, "Hinweis von ScoreGDT", "GDT-Export nicht möglich.\nBitte überprüfen Sie die Angabe des Exportverzeichnisses.\nScoreGDT wird beendet.", QMessageBox.StandardButton.Ok)
                                         mb.exec()
@@ -960,7 +970,7 @@ class MainWindow(QMainWindow):
             self.comboBoxBenutzer.setCurrentIndex(aktBenNum)
             layoutPdfErstellenDatenSendenH = QHBoxLayout()
             self.checkBoxPdfErzeugen = QCheckBox("PDF erzeugen")
-            self.checkBoxPdfErzeugen.setChecked(self.pdferzeugen)
+            self.checkBoxPdfErzeugen.setChecked(False) # Praxis: PDF nur auf Wunsch, Häkchen startet immer leer
             self.checkBoxPdfErzeugen.setFixedWidth(150)
             self.pushButtonSenden = QPushButton("Daten senden")
             self.pushButtonSenden.setFont(self.fontBold)
@@ -1678,7 +1688,8 @@ class MainWindow(QMainWindow):
                 gd.addZeile("6302", "scorepdf")
                 gd.addZeile("6303", "pdf")
                 gd.addZeile("6304", gdtname) # type: ignore
-                gd.addZeile("6305", os.path.join(basedir, "pdf/score_temp.pdf"))
+                scorePdfPfad = praxis.pdfPfad(self.gdtExportVerzeichnis, "score", self.patId)
+                gd.addZeile("6305", scorePdfPfad)
                 # PDF erzeugen
                 pdf = scorepdf.scorepdf("P", "mm", "A4", str(self.scoreRoot.get("name"))) # type: ignore
                 logger.logger.info("FPDF-Instanz erzeugt")
@@ -1786,19 +1797,19 @@ class MainWindow(QMainWindow):
                 pdf.set_font("dejavu", "I", 10)
                 pdf.cell(0, None, "Generiert von ScoreGDT V" + self.version + " (\u00a9 GDT-Tools " + str(datetime.date.today().year) + ")", align="R")
                 logger.logger.info("PDF-Seite aufgebaut")
-                try:
-                    pdf.output(os.path.join(basedir, "pdf/score_temp.pdf"))
-                    logger.logger.info("PDF-Output nach " + os.path.join(basedir, "pdf/score_temp.pdf") + " erfolgreich")
-                except:
-                    logger.logger.error("Fehler bei PDF-Output nach " + os.path.join(basedir, "pdf/score_temp.pdf"))
+                # Praxis: erst das PDF vollständig ablegen, danach die GDT-Datei
+                if praxis.pdfSpeichern(pdf, scorePdfPfad):
+                    logger.logger.info("PDF-Output nach " + scorePdfPfad + " erfolgreich")
             befund = gdtname + ": " +  self.lineEditScoreErgebnis.text() + leerzeichenVorEinheit + self.labelScoreErgebnisEinheit.text() # type: ignore
             gd.addZeile("6220", befund)
             if self.erfuellteAuswertungsregel != -1:
                 gd.addZeile("6220", "Beurteilung: " + auswertung)
-            gd.addZeile("6227", self.lineEditKommentar.text())
+            # Praxis: Kommentar nur, wenn einer eingegeben wurde (sonst Leerzeile in medatixx)
+            if self.lineEditKommentar.text().strip() != "":
+                gd.addZeile("6227", "Kommentar: " + self.lineEditKommentar.text().strip())
             gd.addZeile("6227", "Dokumentiert von: " + self.benutzerkuerzelListe[self.aktuelleBenutzernummer])
             # GDT-Datei exportieren
-            if not gd.speichern(os.path.join(self.gdtExportVerzeichnis, self.kuerzelpraxisedv + self.kuerzelscoregdt + ".gdt"), self.zeichensatz):
+            if not praxis.gdtSpeichern(gd, praxis.rueckschriebPfad(self.gdtExportVerzeichnis, self.kuerzelpraxisedv + self.kuerzelscoregdt, self.rueckschriebMitZeitstempel), self.zeichensatz):
                 logger.logger.error("Fehler bei GDT-Dateiexport nach " + self.gdtExportVerzeichnis + "/" + self.kuerzelpraxisedv + self.kuerzelscoregdt + ".gdt")
                 mb = QMessageBox(QMessageBox.Icon.Warning, "Hinweis von ScoreGDT", "GDT-Export nicht möglich.\nBitte überprüfen Sie die Angabe des Exportverzeichnisses.", QMessageBox.StandardButton.Ok)
                 mb.exec()
