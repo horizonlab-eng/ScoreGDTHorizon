@@ -49,6 +49,7 @@ def favoriten(ordner, namen):
 favoriten(cfg, alle[:12])                                    # Praxis-Favoriten
 favoriten(praxis_personen.rollenOrdner(cfg, "MFA"), alle[:3])  # Vorlage MFA
 d = praxis_personen.laden(cfg)
+pruefe(d["vorauswahlUeber"] == "fragen", "Standard: beim Öffnen nach dem Kürzel fragen")
 d["personRolle"] = {"SH": "MFA"}
 praxis_personen.speichern(cfg, d)
 
@@ -67,8 +68,22 @@ pruefe(os.path.exists(os.path.join(praxis_personen.personOrdner(cfg, "SH"), "fav
 s9 = praxisStartfenster.Startfenster(cfg, scoresPfad, "1050", "X", namen, kuerzel, 9, "")
 pruefe(s9.personIndex == 0, "Startfenster: ungültige Person fällt auf die erste zurück")
 
+# --- "Wer dokumentiert?" ---
+a = praxisStartfenster.KuerzelAbfrage(namen, kuerzel, "Max Mustermann")
+pruefe(a.gewaehlterIndex is None and a.liste.currentItem() is None, "Kürzel-Abfrage: niemand vorausgewählt")
+a.eingabe.setText("sh"); a.eingabeBestaetigt()
+pruefe(a.result() == 1 and a.gewaehlterIndex == 1, "Kürzel-Abfrage: 'sh' + Enter wählt Sabine Muster")
+b = praxisStartfenster.KuerzelAbfrage(namen, kuerzel)
+b.eingabe.setText("ZZ"); b.eingabeBestaetigt()
+pruefe(b.gewaehlterIndex is None and b.hinweis.text() != "", "Kürzel-Abfrage: unbekanntes Kürzel wird nicht angenommen")
+c = praxisStartfenster.KuerzelAbfrage(namen, kuerzel)
+c.eingabe.setText("Beispiel"); c.eingabeBestaetigt()
+pruefe(c.gewaehlterIndex == 0, "Kürzel-Abfrage: eindeutiger Namensteil wählt Dr. Beispiel")
+pruefe(praxis_personen.kuerzelSuchen(" bo ", kuerzel) == 0, "Kürzel-Suche ignoriert Leerzeichen und Groß/klein")
+
 # --- Rollen-Dialog ---
 r = dialogPraxisRollen.RollenDialog(cfg, scoresPfad, namen, kuerzel)
+pruefe(r.rbFragen.isChecked(), "Rollen-Dialog: 'nach dem Kürzel fragen' ist voreingestellt")
 pruefe(r.tabelle.rowCount() == 2, "Rollen-Dialog: zwei Personen in der Tabelle")
 r.listeRollen.addItem("VERAH")
 r.rollenAuswahlenAktualisieren()

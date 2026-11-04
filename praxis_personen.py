@@ -19,13 +19,14 @@ import logger, class_score
 DATEI = "personen.json"
 VORAUSWAHL_ARBEITSPLATZ = "arbeitsplatz"
 VORAUSWAHL_WINDOWS = "windows"
+VORAUSWAHL_FRAGEN = "fragen"   # bei jedem Aufruf nach dem Kuerzel fragen (Standard)
 
 STANDARD = {
     "rollen": ["Arzt", "MFA"],
     "personRolle": {},          # Kuerzel -> Rolle
     "personStandardscore": {},  # Kuerzel -> Score-Name
     "zuletzt": {},              # "pc:<Arbeitsplatz>" bzw. "user:<Windows-Benutzer>" -> Kuerzel
-    "vorauswahlUeber": VORAUSWAHL_ARBEITSPLATZ,
+    "vorauswahlUeber": VORAUSWAHL_FRAGEN,
 }
 
 
@@ -136,6 +137,19 @@ def vorauswahl(configPath: str, kuerzelListe: list, ersatzIndex: int) -> int:
     if 0 <= ersatzIndex < len(kuerzelListe):
         return ersatzIndex
     return 0
+
+
+def sollFragen(configPath: str) -> bool:
+    return laden(configPath).get("vorauswahlUeber") == VORAUSWAHL_FRAGEN
+
+
+def kuerzelSuchen(eingabe: str, kuerzelListe: list):
+    """Index der Person mit genau diesem Kuerzel (Gross-/Kleinschreibung egal), sonst None."""
+    e = eingabe.strip().casefold()
+    for i, k in enumerate(kuerzelListe):
+        if k.strip().casefold() == e and e != "":
+            return i
+    return None
 
 
 def merken(configPath: str, kuerzel: str):

@@ -14,7 +14,7 @@ Ergebnis von exec():  1 = Score/Verlauf gewaehlt,  0 = abgebrochen,
 import praxis_personen, dialogScoreAuswahl, dialogEinstellungenFavoriten
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QFont
-from PySide6.QtWidgets import QHBoxLayout, QLabel, QComboBox, QFrame, QPushButton
+from PySide6.QtWidgets import QHBoxLayout, QVBoxLayout, QLabel, QComboBox, QFrame, QPushButton, QDialog, QDialogButtonBox, QLineEdit, QListWidget, QListWidgetItem
 
 NEU_OEFFNEN = 2
 
@@ -86,3 +86,85 @@ class Startfenster(dialogScoreAuswahl.ScoreAuswahl):
         if df.exec() == 1:
             self.neuerPersonIndex = self.personIndex
             self.done(NEU_OEFFNEN)
+
+
+class KuerzelAbfrage(QDialog):
+    """Kleines Fenster "Wer dokumentiert?": Kuerzel eintippen + Enter oder Person doppelt anklicken.
+    Bewusst ohne Vorauswahl, damit niemand versehentlich unter fremdem Kuerzel dokumentiert.
+    Ergebnis: exec() == 1 und gewaehlterIndex = Index in der Personenliste."""
+
+    def __init__(self, benutzernamen: list, benutzerkuerzel: list, patientText: str = ""):
+        super().__init__()
+        self.namen = list(benutzernamen)
+        self.kuerzel = list(benutzerkuerzel)
+        self.gewaehlterIndex = None
+        self.setWindowTitle("ScoreGDT – Wer dokumentiert?")
+        self.setMinimumWidth(420)
+
+        fett = QFont()
+        fett.setBold(True)
+        layout = QVBoxLayout()
+        if patientText:
+            labelPatient = QLabel("Patient/in: " + patientText)
+            labelPatient.setFont(fett)
+            layout.addWidget(labelPatient)
+        layout.addWidget(QLabel("Bitte Ihr Kürzel eingeben und Enter drücken\n(oder Ihren Namen doppelt anklicken):"))
+        self.eingabe = QLineEdit()
+        self.eingabe.setPlaceholderText("Kürzel")
+        groesser = QFont()
+        groesser.setPointSize(14)
+        self.eingabe.setFont(groesser)
+        self.eingabe.textChanged.connect(self.filtern)
+        self.eingabe.returnPressed.connect(self.eingabeBestaetigt)
+        layout.addWidget(self.eingabe)
+        self.liste = QListWidget()
+        for i in range(len(self.namen)):
+            item = QListWidgetItem((self.kuerzel[i] if i < len(self.kuerzel) else "") + "  –  " + self.namen[i])
+            item.setData(Qt.ItemDataRole.UserRole, i)
+            self.liste.addItem(item)
+        self.liste.itemDoubleClicked.connect(self.listeBestaetigt)
+        self.liste.itemActivated.connect(self.listeBestaetigt)
+        layout.addWidget(self.liste)
+        self.hinweis = QLabel("")
+        layout.addWidget(self.hinweis)
+        self.buttonBox = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        self.buttonBox.button(QDialogButtonBox.StandardButton.Cancel).setText("Abbrechen")
+        self.buttonBox.accepted.connect(self.okGeklickt)
+        self.buttonBox.rejected.connect(self.reject)
+        layout.addWidget(self.buttonBox)
+        self.setLayout(layout)
+        self.eingabe.setFocus()
+
+    def filtern(self, text: str):
+        t = text.strip().casefold()
+        for r in range(self.liste.count()):
+            item = self.liste.item(r)
+            i = item.data(Qt.ItemDataRole.UserRole)
+            k = self.kuerzel[i].casefold() if i < len(self.kuerzel) else ""
+            item.setHidden(t != "" and not (k.startswith(t) or t in self.namen[i].casefold()))
+        self.hinweis.setText("")
+
+    def waehlen(self, index):
+        self.gewaehlterIndex = index
+        self.done(1)
+
+    def eingabeBestaetigt(self):
+        index = praxis_personen.kuerzelSuchen(self.eingabe.text(), self.kuerzel)
+        if index is not None:
+            self.waehlen(index)
+            return
+        sichtbar = [self.liste.item(r) for r in range(self.liste.count()) if not self.liste.item(r).isHidden()]
+        if len(sichtbar) == 1 and self.eingabe.text().strip() != "":
+            self.waehlen(sichtbar[0].data(Qt.ItemDataRole.UserRole))
+        else:
+            self.hinweis.setText("Kürzel nicht eindeutig – bitte vollständig eingeben oder Namen anklicken.")
+
+    def listeBestaetigt(self, item):
+        self.waehlen(item.data(Qt.ItemDataRole.UserRole))
+
+    def okGeklickt(self):
+        item = self.liste.currentItem()
+        if item is not None and not item.isHidden():
+            self.waehlen(item.data(Qt.ItemDataRole.UserRole))
+        else:
+            self.eingabeBestaetigt()

@@ -82,14 +82,19 @@ class RollenDialog(QDialog):
         gbPersonen.setLayout(lyPersonen)
 
         # --- Vorauswahl ---
-        gbVor = QGroupBox("Vorauswahl der Person im Startfenster")
+        gbVor = QGroupBox("Person beim Öffnen von ScoreGDT")
         lyVor = QVBoxLayout()
-        self.rbArbeitsplatz = QRadioButton("Nach Arbeitsplatz (zuletzt an diesem PC gewählte Person)")
+        self.rbFragen = QRadioButton("Bei jedem Aufruf nach dem Kürzel fragen (empfohlen)")
+        self.rbArbeitsplatz = QRadioButton("Nach Arbeitsplatz vorauswählen (zuletzt an diesem PC gewählte Person)")
         self.rbWindows = QRadioButton("Nach Windows-Anmeldung (sinnvoll, wenn Windows-Konten personenbezogen sind)")
-        if self.daten.get("vorauswahlUeber") == praxis_personen.VORAUSWAHL_WINDOWS:
+        modus = self.daten.get("vorauswahlUeber")
+        if modus == praxis_personen.VORAUSWAHL_WINDOWS:
             self.rbWindows.setChecked(True)
-        else:
+        elif modus == praxis_personen.VORAUSWAHL_ARBEITSPLATZ:
             self.rbArbeitsplatz.setChecked(True)
+        else:
+            self.rbFragen.setChecked(True)
+        lyVor.addWidget(self.rbFragen)
         lyVor.addWidget(self.rbArbeitsplatz)
         lyVor.addWidget(self.rbWindows)
         gbVor.setLayout(lyVor)
@@ -186,7 +191,12 @@ class RollenDialog(QDialog):
             score = self.tabelle.cellWidget(i, 3).currentText()
             if score != KEIN_STANDARD:
                 daten["personStandardscore"][kuerzel] = score
-        daten["vorauswahlUeber"] = praxis_personen.VORAUSWAHL_WINDOWS if self.rbWindows.isChecked() else praxis_personen.VORAUSWAHL_ARBEITSPLATZ
+        if self.rbWindows.isChecked():
+            daten["vorauswahlUeber"] = praxis_personen.VORAUSWAHL_WINDOWS
+        elif self.rbArbeitsplatz.isChecked():
+            daten["vorauswahlUeber"] = praxis_personen.VORAUSWAHL_ARBEITSPLATZ
+        else:
+            daten["vorauswahlUeber"] = praxis_personen.VORAUSWAHL_FRAGEN
         return daten
 
     def accept(self):

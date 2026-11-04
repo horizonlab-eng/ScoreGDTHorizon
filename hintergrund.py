@@ -141,7 +141,7 @@ class Hintergrund(QObject):
         if self.beimOeffnen:
             import praxisStartfenster
             offen = QApplication.activeModalWidget()
-            if offenesStartfensterSchliessen and isinstance(offen, praxisStartfenster.Startfenster):
+            if offenesStartfensterSchliessen and isinstance(offen, (praxisStartfenster.Startfenster, praxisStartfenster.KuerzelAbfrage)):
                 logger.logger.warning("Hintergrund: offenes Startfenster durch neuen Aufruf ersetzt")
                 offen.reject()
             elif offen is not None:

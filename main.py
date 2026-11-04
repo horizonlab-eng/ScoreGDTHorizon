@@ -458,6 +458,12 @@ class MainWindow(QMainWindow):
                     auswahlOk = False
                     # Praxis: Person vorauswählen (zuletzt an diesem Arbeitsplatz), Startfenster mit ihren Favoriten
                     self.aktuelleBenutzernummer = praxis_personen.vorauswahl(self.configPath, self.benutzerkuerzelListe, self.aktuelleBenutzernummer)
+                    if praxis_personen.sollFragen(self.configPath) and len(self.benutzerkuerzelListe) > 1:
+                        abfrage = praxisStartfenster.KuerzelAbfrage(self.benutzernamenListe, self.benutzerkuerzelListe, self.name + " (* " + self.geburtsdatum + ")")
+                        if abfrage.exec() != 1 or abfrage.gewaehlterIndex is None:
+                            logger.logger.info("Keine Person gewählt")
+                            sys.exit()
+                        self.aktuelleBenutzernummer = abfrage.gewaehlterIndex
                     if not scoreAlsStartargument:
                         personIndex = self.aktuelleBenutzernummer
                         while True:
