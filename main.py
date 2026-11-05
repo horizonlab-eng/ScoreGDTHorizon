@@ -1740,9 +1740,7 @@ class MainWindow(QMainWindow):
         wann = d[0:2] + "." + d[2:4] + "." + d[4:8] + ", " + u[0:2] + ":" + u[2:4] + " Uhr"
         wer = str(bogen.get("name", "")) + (" (" + str(bogen.get("kuerzel", "")) + ")" if bogen.get("kuerzel") else "")
         hinweis = "Gespeicherter Bogen vom " + wann + " – erstellt von " + wer
-        if bogen.get("korrekturVon") is not None:
-            hinweis += ", zuletzt geändert" + (" von " + str(bogen.get("korrekturVon")) if bogen.get("korrekturVon") else "")
-        hinweis += ".\nWird etwas geändert und gesendet, entsteht in medatixx ein Korrektur-Eintrag mit demselben Datum."
+        hinweis += ".\nGeändert und gesendet, erscheint der Eintrag in medatixx mit demselben Datum – den alten Eintrag dort bitte löschen."
         labelBogen = QLabel(hinweis)
         labelBogen.setWordWrap(True)
         labelBogen.setStyleSheet("background:#fff4d6; border:1px solid #d9b860; padding:6px;")
@@ -1757,7 +1755,7 @@ class MainWindow(QMainWindow):
         if self.aktuelleBenutzernummer < self.comboBoxBenutzer.count():
             self.comboBoxBenutzer.setCurrentIndex(self.aktuelleBenutzernummer)
         self.comboBoxBenutzer.setEnabled(False)
-        self.pushButtonSenden.setText("Korrektur senden")
+        self.pushButtonSenden.setText("Geänderte Daten senden")
         fehlend = praxis_boegen.zustandSetzen(self, bogen)
         if fehlend:
             logger.logger.warning("Bogen: Felder nicht mehr im Score vorhanden: " + ", ".join(fehlend))
@@ -1815,14 +1813,8 @@ class MainWindow(QMainWindow):
                 if praxis_boegen.gleich(zustandJetzt, self.praxisAusgangszustand):
                     QMessageBox(QMessageBox.Icon.Information, "Hinweis von ScoreGDT", "Der Bogen wurde nicht geändert – es wurde nichts gesendet.\nZum Schließen einfach das Fenster schließen.", QMessageBox.StandardButton.Ok).exec()
                     return
-                korrekturIndex = praxis_personen.vorauswahl(self.configPath, self.benutzerkuerzelListe, self.aktuelleBenutzernummer)
-                if praxis_personen.sollFragen(self.configPath) and len(self.benutzerkuerzelListe) > 1:
-                    abfrage = praxisStartfenster.KuerzelAbfrage(self.benutzernamenListe, self.benutzerkuerzelListe, self.name + " (* " + self.geburtsdatum + ")")
-                    abfrage.setWindowTitle("ScoreGDT – Wer ändert den Eintrag?")
-                    if abfrage.exec() != 1 or abfrage.gewaehlterIndex is None:
-                        return
-                    korrekturIndex = abfrage.gewaehlterIndex
-                korrekturVon = self.benutzerkuerzelListe[korrekturIndex] if korrekturIndex < len(self.benutzerkuerzelListe) else ""
+                # Praxis: ohne Rückfrage; festgehalten wird nur das Windows-Konto (in der Bogen-Datei)
+                korrekturVon = os.environ.get("USERNAME", "")
             self.pdferzeugen = self.checkBoxPdfErzeugen.isChecked()
             # GDT-Datei erzeugen
             sh = gdt.SatzHeader(gdt.Satzart.DATEN_EINER_UNTERSUCHUNG_UEBERMITTELN_6310, self.configIni["GDT"]["idpraxisedv"], self.scoregdtId, self.zeichensatz, "2.10", "Fabian Treusch - GDT-Tools", "ScoreGDT", self.version, self.patId)
@@ -1993,8 +1985,6 @@ class MainWindow(QMainWindow):
             if self.lineEditKommentar.text().strip() != "":
                 gd.addZeile("6227", "Kommentar: " + self.lineEditKommentar.text().strip())
             gd.addZeile("6227", "Dokumentiert von: " + self.benutzerkuerzelListe[self.aktuelleBenutzernummer])
-            if bogen:
-                gd.addZeile("6227", "Korrektur am " + datetime.datetime.now().strftime("%d.%m.%Y %H:%M") + (" durch " + korrekturVon if korrekturVon else "") + " (ersetzt den Eintrag mit demselben Datum)")
             # GDT-Datei exportieren
             if not praxis.gdtSpeichern(gd, praxis.rueckschriebPfad(self.gdtExportVerzeichnis, self.kuerzelpraxisedv + self.kuerzelscoregdt, self.rueckschriebMitZeitstempel), self.zeichensatz):
                 logger.logger.error("Fehler bei GDT-Dateiexport nach " + self.gdtExportVerzeichnis + "/" + self.kuerzelpraxisedv + self.kuerzelscoregdt + ".gdt")
