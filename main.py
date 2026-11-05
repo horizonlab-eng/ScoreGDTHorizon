@@ -403,6 +403,12 @@ class MainWindow(QMainWindow):
             self.geburtsdatum = str(gd.getInhalt("3103"))[0:2] + "." + str(gd.getInhalt("3103"))[2:4] + "." + str(gd.getInhalt("3103"))[4:8]
             self.geschlecht = str(gd.getInhalt("3110")) # 1=männlich, 2=weiblich
             logger.logger.info("Geschlecht aus PVS-GDT (3110): " + self.geschlecht)
+            # Praxis: Art des Auftrags merken (6302 = neue Untersuchung, 6311 = Untersuchung zeigen)
+            self.praxisSatzart = str(gd.getInhalt("8000"))
+            if self.praxisSatzart == "6311":
+                # Für die Einrichtung protokollieren, welche Felder das PVS bei "Untersuchung zeigen" mitschickt
+                felder = [z[3:7] + "=" + z[7:].strip() for z in gd.gdtDatei if len(z) > 7 and z[3:7] not in ("3101", "3102", "3103", "3104", "3105", "3106", "3107", "3110")]
+                logger.logger.warning("Auftrag 6311 (Untersuchung zeigen), Felder: " + " | ".join(felder))
             # Praxis: Anfrage beim Beenden löschen, damit sie nicht später versehentlich erneut geöffnet wird
             atexit.register(praxis.anfrageLoeschen, os.path.join(self.gdtImportVerzeichnis, self.kuerzelscoregdt + self.kuerzelpraxisedv + ".gdt"))
         except (IOError, gdtzeile.GdtFehlerException) as e:
@@ -456,15 +462,21 @@ class MainWindow(QMainWindow):
                             if self.scoreRoot != None:
                                 scoreAlsStartargument = True
                     auswahlOk = False
+                    # Praxis: Doppelklick auf einen ScoreGDT-Eintrag in medatixx (6311) zeigt den Verlauf
+                    praxisZeigen = getattr(self, "praxisSatzart", "") == "6311" and not scoreAlsStartargument
+                    if praxisZeigen:
+                        logger.logger.info("Untersuchung zeigen: Verlauf wird angezeigt")
+                        self.aktuelleBenutzernummer = praxis_personen.vorauswahl(self.configPath, self.benutzerkuerzelListe, self.aktuelleBenutzernummer)
+                        auswahlOk = True
                     # Praxis: Person vorauswählen (zuletzt an diesem Arbeitsplatz), Startfenster mit ihren Favoriten
                     self.aktuelleBenutzernummer = praxis_personen.vorauswahl(self.configPath, self.benutzerkuerzelListe, self.aktuelleBenutzernummer)
-                    if praxis_personen.sollFragen(self.configPath) and len(self.benutzerkuerzelListe) > 1:
+                    if not praxisZeigen and praxis_personen.sollFragen(self.configPath) and len(self.benutzerkuerzelListe) > 1:
                         abfrage = praxisStartfenster.KuerzelAbfrage(self.benutzernamenListe, self.benutzerkuerzelListe, self.name + " (* " + self.geburtsdatum + ")")
                         if abfrage.exec() != 1 or abfrage.gewaehlterIndex is None:
                             logger.logger.info("Keine Person gewählt")
                             sys.exit()
                         self.aktuelleBenutzernummer = abfrage.gewaehlterIndex
-                    if not scoreAlsStartargument:
+                    if not scoreAlsStartargument and not praxisZeigen:
                         personIndex = self.aktuelleBenutzernummer
                         while True:
                             ds = praxisStartfenster.Startfenster(self.configPath, self.scoresPfad, self.patId, self.name + " (* " + self.geburtsdatum + ")", self.benutzernamenListe, self.benutzerkuerzelListe, personIndex, self.standardscore)
@@ -480,18 +492,31 @@ class MainWindow(QMainWindow):
                     if scoreAlsStartargument or auswahlOk:
                         if scoreAlsStartargument:
                             logger.logger.info("Score " + sys.argv[1] + " als Startargument")
-                        elif not ds.buttonTrendAusdruck.isChecked(): # Scoreberechung
+                        elif not praxisZeigen and not ds.buttonTrendAusdruck.isChecked(): # Scoreberechung
                             self.scoreRoot = class_score.Score.getScoreXml(self.scoresPfad, ds.aktuellGewaehlterScore)
                             logger.logger.info("Score " + ds.aktuellGewaehlterScore + " ausgewählt")
                         else: # Trendanzeige
-                            ausgewaehlteTrendScores = [rb.text() for rb in ds.radioButtonsScore if rb.isChecked()]
+                            ausgewaehlteTrendScores = [] if praxisZeigen else [rb.text() for rb in ds.radioButtonsScore if rb.isChecked()]
                             try:
                                 xmlTree = class_trends.getTrends(os.path.join(self.trendverzeichnis, self.patId))
-                                ausgewaehlteTestXmls = [t for t in xmlTree.findall("test") if str(t.get("name")) in ausgewaehlteTrendScores or (ds.checkBoxGeriGDT.isChecked() and str(t.get("tool")) == class_trends.GdtTool.GERIGDT.value)]
+                                if praxisZeigen: # Praxis: alle gespeicherten Ergebnisse des Patienten
+                                    ausgewaehlteTestXmls = list(xmlTree.findall("test"))
+                                else:
+                                    ausgewaehlteTestXmls = [t for t in xmlTree.findall("test") if str(t.get("name")) in ausgewaehlteTrendScores or (ds.checkBoxGeriGDT.isChecked() and str(t.get("tool")) == class_trends.GdtTool.GERIGDT.value)]
+                                if praxisZeigen and len(ausgewaehlteTestXmls) == 0:
+                                    QMessageBox(QMessageBox.Icon.Information, "Hinweis von ScoreGDT", "Für " + self.name + " sind in ScoreGDT noch keine Ergebnisse gespeichert.", QMessageBox.StandardButton.Ok).exec()
+                                    sys.exit()
                                 ausgewaehlteTests = [class_trends.getTestAusXml(t) for t in ausgewaehlteTestXmls]
                                 ausgewaehlteTests = sorted(ausgewaehlteTests, key=lambda t:t.getName())
                                 dt = dialogTrendanzeige.Trendanzeige(ausgewaehlteTests)
                                 trendErgebnis = dt.exec() # Praxis: 1 = an medatixx senden, 3 = PDF ansehen/drucken
+                                if trendErgebnis == 1 and praxisZeigen and praxis_personen.sollFragen(self.configPath) and len(self.benutzerkuerzelListe) > 1:
+                                    # Praxis: beim reinen Ansehen kein Kürzel nötig - erst wenn etwas in die Kartei geht
+                                    abfrage = praxisStartfenster.KuerzelAbfrage(self.benutzernamenListe, self.benutzerkuerzelListe, self.name + " (* " + self.geburtsdatum + ")")
+                                    if abfrage.exec() == 1 and abfrage.gewaehlterIndex is not None:
+                                        self.aktuelleBenutzernummer = abfrage.gewaehlterIndex
+                                    else:
+                                        trendErgebnis = 0
                                 if trendErgebnis in (1, dialogTrendanzeige.ANSEHEN):
                                     heute = datetime.datetime.now()
                                     # GDT-Datei erzeugen
