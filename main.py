@@ -3,7 +3,7 @@ import xml.etree.ElementTree as ElementTree
 import requests
 import gdt, gdtzeile, class_part, class_widgets, class_score, farbe
 import praxis
-import praxis_personen, praxisStartfenster, dialogPraxisRollen, praxis_pdf, dialogPraxisPdf, praxis_vorlage
+import praxis_personen, praxisStartfenster, dialogPraxisRollen, praxis_pdf, dialogPraxisPdf, praxis_vorlage, praxis_boegen
 import dialogUeberScoreGdt, dialogEinstellungenAllgemein, dialogEinstellungenGdt, dialogEinstellungenBenutzer, dialogEinstellungenLanrLizenzschluessel, dialogEula, dialogEinstellungenImportExport, dialogScoreAuswahl, dialogEinstellungenFavoriten, dialogStartargumentGenerieren
 import class_trends, dialogTrendanzeige
 import class_enums, class_Rechenoperation, scorepdf
@@ -112,6 +112,7 @@ class MainWindow(QMainWindow):
 
     def __init__(self):
         super().__init__()
+        self.praxisBogen = {} # Praxis: gespeicherter Bogen bei "Untersuchung zeigen" (Doppelklick in medatixx)
 
         # config.ini lesen
         ersterStart = False
@@ -405,6 +406,8 @@ class MainWindow(QMainWindow):
             logger.logger.info("Geschlecht aus PVS-GDT (3110): " + self.geschlecht)
             # Praxis: Art des Auftrags merken (6302 = neue Untersuchung, 6311 = Untersuchung zeigen)
             self.praxisSatzart = str(gd.getInhalt("8000"))
+            self.praxis6200 = str(gd.getInhalt("6200"))
+            self.praxis6201 = str(gd.getInhalt("6201"))
             if self.praxisSatzart == "6311":
                 # Für die Einrichtung protokollieren, welche Felder das PVS bei "Untersuchung zeigen" mitschickt
                 felder = [z[3:7] + "=" + z[7:].strip() for z in gd.gdtDatei if len(z) > 7 and z[3:7] not in ("3101", "3102", "3103", "3104", "3105", "3106", "3107", "3110")]
@@ -463,10 +466,22 @@ class MainWindow(QMainWindow):
                                 scoreAlsStartargument = True
                     auswahlOk = False
                     # Praxis: Doppelklick auf einen ScoreGDT-Eintrag in medatixx (6311) zeigt den Verlauf
+                    # Praxis: Doppelklick auf einen ScoreGDT-Eintrag in medatixx (6311) öffnet den damals ausgefüllten Bogen
                     praxisZeigen = getattr(self, "praxisSatzart", "") == "6311" and not scoreAlsStartargument
                     if praxisZeigen:
-                        logger.logger.info("Untersuchung zeigen: Verlauf wird angezeigt")
-                        self.aktuelleBenutzernummer = praxis_personen.vorauswahl(self.configPath, self.benutzerkuerzelListe, self.aktuelleBenutzernummer)
+                        eintragText = self.praxis6200[0:2] + "." + self.praxis6200[2:4] + "." + self.praxis6200[4:8] + ", " + self.praxis6201[0:2] + ":" + self.praxis6201[2:4] + " Uhr"
+                        self.praxisBogen = praxis_boegen.finden(self.trendverzeichnis, self.patId, self.praxis6200, self.praxis6201)
+                        if not self.praxisBogen:
+                            logger.logger.warning("Untersuchung zeigen: kein gespeicherter Bogen zu " + self.praxis6200 + " " + self.praxis6201)
+                            QMessageBox(QMessageBox.Icon.Information, "Hinweis von ScoreGDT", "Zu diesem Eintrag (" + eintragText + ") ist in ScoreGDT kein ausgefüllter Bogen gespeichert.\n\nScoreGDT speichert die Antworten erst seit dem Update vom November 2026. Bei älteren Einträgen steht nur das Ergebnis in der Kartei.", QMessageBox.StandardButton.Ok).exec()
+                            sys.exit()
+                        self.scoreRoot = class_score.Score.getScoreXml(self.scoresPfad, str(self.praxisBogen.get("score")))
+                        if self.scoreRoot is None:
+                            QMessageBox(QMessageBox.Icon.Warning, "Hinweis von ScoreGDT", "Der Score „" + str(self.praxisBogen.get("score")) + "“ ist in ScoreGDT nicht mehr vorhanden. Der Bogen kann nicht geöffnet werden.", QMessageBox.StandardButton.Ok).exec()
+                            sys.exit()
+                        ersteller = praxis_personen.kuerzelSuchen(str(self.praxisBogen.get("kuerzel", "")), self.benutzerkuerzelListe)
+                        self.aktuelleBenutzernummer = ersteller if ersteller is not None else praxis_personen.vorauswahl(self.configPath, self.benutzerkuerzelListe, self.aktuelleBenutzernummer)
+                        logger.logger.info("Untersuchung zeigen: Bogen " + str(self.praxisBogen.get("score")) + " vom " + eintragText + " wird geöffnet")
                         auswahlOk = True
                     # Praxis: Person vorauswählen (zuletzt an diesem Arbeitsplatz), Startfenster mit ihren Favoriten
                     self.aktuelleBenutzernummer = praxis_personen.vorauswahl(self.configPath, self.benutzerkuerzelListe, self.aktuelleBenutzernummer)
@@ -492,31 +507,20 @@ class MainWindow(QMainWindow):
                     if scoreAlsStartargument or auswahlOk:
                         if scoreAlsStartargument:
                             logger.logger.info("Score " + sys.argv[1] + " als Startargument")
-                        elif not praxisZeigen and not ds.buttonTrendAusdruck.isChecked(): # Scoreberechung
+                        elif praxisZeigen:
+                            pass # Praxis: Score steht schon fest (gespeicherter Bogen)
+                        elif not ds.buttonTrendAusdruck.isChecked(): # Scoreberechung
                             self.scoreRoot = class_score.Score.getScoreXml(self.scoresPfad, ds.aktuellGewaehlterScore)
                             logger.logger.info("Score " + ds.aktuellGewaehlterScore + " ausgewählt")
                         else: # Trendanzeige
-                            ausgewaehlteTrendScores = [] if praxisZeigen else [rb.text() for rb in ds.radioButtonsScore if rb.isChecked()]
+                            ausgewaehlteTrendScores = [rb.text() for rb in ds.radioButtonsScore if rb.isChecked()]
                             try:
                                 xmlTree = class_trends.getTrends(os.path.join(self.trendverzeichnis, self.patId))
-                                if praxisZeigen: # Praxis: alle gespeicherten Ergebnisse des Patienten
-                                    ausgewaehlteTestXmls = list(xmlTree.findall("test"))
-                                else:
-                                    ausgewaehlteTestXmls = [t for t in xmlTree.findall("test") if str(t.get("name")) in ausgewaehlteTrendScores or (ds.checkBoxGeriGDT.isChecked() and str(t.get("tool")) == class_trends.GdtTool.GERIGDT.value)]
-                                if praxisZeigen and len(ausgewaehlteTestXmls) == 0:
-                                    QMessageBox(QMessageBox.Icon.Information, "Hinweis von ScoreGDT", "Für " + self.name + " sind in ScoreGDT noch keine Ergebnisse gespeichert.", QMessageBox.StandardButton.Ok).exec()
-                                    sys.exit()
+                                ausgewaehlteTestXmls = [t for t in xmlTree.findall("test") if str(t.get("name")) in ausgewaehlteTrendScores or (ds.checkBoxGeriGDT.isChecked() and str(t.get("tool")) == class_trends.GdtTool.GERIGDT.value)]
                                 ausgewaehlteTests = [class_trends.getTestAusXml(t) for t in ausgewaehlteTestXmls]
                                 ausgewaehlteTests = sorted(ausgewaehlteTests, key=lambda t:t.getName())
                                 dt = dialogTrendanzeige.Trendanzeige(ausgewaehlteTests)
                                 trendErgebnis = dt.exec() # Praxis: 1 = an medatixx senden, 3 = PDF ansehen/drucken
-                                if trendErgebnis == 1 and praxisZeigen and praxis_personen.sollFragen(self.configPath) and len(self.benutzerkuerzelListe) > 1:
-                                    # Praxis: beim reinen Ansehen kein Kürzel nötig - erst wenn etwas in die Kartei geht
-                                    abfrage = praxisStartfenster.KuerzelAbfrage(self.benutzernamenListe, self.benutzerkuerzelListe, self.name + " (* " + self.geburtsdatum + ")")
-                                    if abfrage.exec() == 1 and abfrage.gewaehlterIndex is not None:
-                                        self.aktuelleBenutzernummer = abfrage.gewaehlterIndex
-                                    else:
-                                        trendErgebnis = 0
                                 if trendErgebnis in (1, dialogTrendanzeige.ANSEHEN):
                                     heute = datetime.datetime.now()
                                     # GDT-Datei erzeugen
@@ -1098,6 +1102,8 @@ class MainWindow(QMainWindow):
             mainLayoutV.addLayout(kommentarfeldLayout)
             mainLayoutV.addLayout(datumBenutzerLayoutG)
             mainLayoutV.addLayout(layoutPdfErstellenDatenSendenH)
+            if getattr(self, "praxisBogen", {}):
+                self.praxisBogenEinsetzen(mainLayoutV)
             self.widget.setLayout(mainLayoutV)
             self.setCentralWidget(self.widget)
 
@@ -1727,6 +1733,44 @@ class MainWindow(QMainWindow):
     def comboBoxBenutzerIndexChanged(self, index):
         self.aktuelleBenutzernummer = index
 
+    def praxisBogenEinsetzen(self, layout):
+        """Praxis: setzt den gespeicherten Bogen (Doppelklick in medatixx) in das Fenster ein."""
+        bogen = self.praxisBogen
+        d, u = str(bogen.get("datum", "")), str(bogen.get("uhrzeit", ""))
+        wann = d[0:2] + "." + d[2:4] + "." + d[4:8] + ", " + u[0:2] + ":" + u[2:4] + " Uhr"
+        wer = str(bogen.get("name", "")) + (" (" + str(bogen.get("kuerzel", "")) + ")" if bogen.get("kuerzel") else "")
+        hinweis = "Gespeicherter Bogen vom " + wann + " – erstellt von " + wer
+        if bogen.get("korrekturVon") is not None:
+            hinweis += ", zuletzt geändert" + (" von " + str(bogen.get("korrekturVon")) if bogen.get("korrekturVon") else "")
+        hinweis += ".\nWird etwas geändert und gesendet, entsteht in medatixx ein Korrektur-Eintrag mit demselben Datum."
+        labelBogen = QLabel(hinweis)
+        labelBogen.setWordWrap(True)
+        labelBogen.setStyleSheet("background:#fff4d6; border:1px solid #d9b860; padding:6px;")
+        layout.insertWidget(0, labelBogen)
+        try:
+            datum = QDate(int(d[4:8]), int(d[2:4]), int(d[0:2]))
+            self.dateEditUntersuchungsdatum.setDate(datum)
+            self.untersuchungsdatum = datum
+        except Exception:
+            pass
+        self.dateEditUntersuchungsdatum.setEnabled(False)
+        if self.aktuelleBenutzernummer < self.comboBoxBenutzer.count():
+            self.comboBoxBenutzer.setCurrentIndex(self.aktuelleBenutzernummer)
+        self.comboBoxBenutzer.setEnabled(False)
+        self.pushButtonSenden.setText("Korrektur senden")
+        fehlend = praxis_boegen.zustandSetzen(self, bogen)
+        if fehlend:
+            logger.logger.warning("Bogen: Felder nicht mehr im Score vorhanden: " + ", ".join(fehlend))
+        self.lineEditKommentar.setText(str(bogen.get("kommentar", "")))
+        try:
+            self.pushButtonBerechnenClicked()
+        except Exception as e:
+            logger.logger.warning("Bogen: Neuberechnung nicht möglich: " + str(e))
+        self.praxisAusgangszustand = praxis_boegen.zustandLesen(self.widgets, self.einheitToggles)
+        self.praxisAusgangszustand["kommentar"] = self.lineEditKommentar.text()
+        if fehlend:
+            QMessageBox(QMessageBox.Icon.Warning, "Hinweis von ScoreGDT", "Der Score wurde seit dem Erfassen verändert. Einige Antworten konnten nicht übernommen werden – bitte den Bogen prüfen.", QMessageBox.StandardButton.Ok).exec()
+
     def praxisDokumentiertVon(self) -> str:
         """Praxis: "Name (Kürzel)" der dokumentierenden Person für die PDF-Vorlage."""
         try:
@@ -1762,6 +1806,23 @@ class MainWindow(QMainWindow):
     def pushButtonSendenClicked(self):
         if self.lineEditScoreErgebnis.text() != "":
             logger.logger.info("Daten senden geklickt")
+            # Praxis: gespeicherter Bogen geöffnet? Dann nur senden, wenn etwas geändert wurde, und als Korrektur kennzeichnen
+            bogen = getattr(self, "praxisBogen", {})
+            korrekturVon = ""
+            if bogen:
+                zustandJetzt = praxis_boegen.zustandLesen(self.widgets, self.einheitToggles)
+                zustandJetzt["kommentar"] = self.lineEditKommentar.text()
+                if praxis_boegen.gleich(zustandJetzt, self.praxisAusgangszustand):
+                    QMessageBox(QMessageBox.Icon.Information, "Hinweis von ScoreGDT", "Der Bogen wurde nicht geändert – es wurde nichts gesendet.\nZum Schließen einfach das Fenster schließen.", QMessageBox.StandardButton.Ok).exec()
+                    return
+                korrekturIndex = praxis_personen.vorauswahl(self.configPath, self.benutzerkuerzelListe, self.aktuelleBenutzernummer)
+                if praxis_personen.sollFragen(self.configPath) and len(self.benutzerkuerzelListe) > 1:
+                    abfrage = praxisStartfenster.KuerzelAbfrage(self.benutzernamenListe, self.benutzerkuerzelListe, self.name + " (* " + self.geburtsdatum + ")")
+                    abfrage.setWindowTitle("ScoreGDT – Wer ändert den Eintrag?")
+                    if abfrage.exec() != 1 or abfrage.gewaehlterIndex is None:
+                        return
+                    korrekturIndex = abfrage.gewaehlterIndex
+                korrekturVon = self.benutzerkuerzelListe[korrekturIndex] if korrekturIndex < len(self.benutzerkuerzelListe) else ""
             self.pdferzeugen = self.checkBoxPdfErzeugen.isChecked()
             # GDT-Datei erzeugen
             sh = gdt.SatzHeader(gdt.Satzart.DATEN_EINER_UNTERSUCHUNG_UEBERMITTELN_6310, self.configIni["GDT"]["idpraxisedv"], self.scoregdtId, self.zeichensatz, "2.10", "Fabian Treusch - GDT-Tools", "ScoreGDT", self.version, self.patId)
@@ -1772,6 +1833,9 @@ class MainWindow(QMainWindow):
             untersuchungsdatum = "{:>02}".format(str(self.dateEditUntersuchungsdatum.date().day())) + "{:>02}".format(str(self.dateEditUntersuchungsdatum.date().month())) + str(self.dateEditUntersuchungsdatum.date().year())
             jetzt = QTime().currentTime()
             uhrzeit = "{:>02}".format(str(jetzt.hour())) + "{:>02}".format(str(jetzt.minute())) + "{:>02}".format(str(jetzt.second()))
+            if bogen: # Praxis: Korrektur steht unter Datum und Uhrzeit des ursprünglichen Eintrags
+                untersuchungsdatum = str(bogen.get("datum", untersuchungsdatum))
+                uhrzeit = str(bogen.get("uhrzeit", uhrzeit))
             logger.logger.info("Untersuchungsdatum/ -uhrzeit festgelegt")
             gd.addZeile("6200", untersuchungsdatum)
             gd.addZeile("6201", uhrzeit)
@@ -1929,6 +1993,8 @@ class MainWindow(QMainWindow):
             if self.lineEditKommentar.text().strip() != "":
                 gd.addZeile("6227", "Kommentar: " + self.lineEditKommentar.text().strip())
             gd.addZeile("6227", "Dokumentiert von: " + self.benutzerkuerzelListe[self.aktuelleBenutzernummer])
+            if bogen:
+                gd.addZeile("6227", "Korrektur am " + datetime.datetime.now().strftime("%d.%m.%Y %H:%M") + (" durch " + korrekturVon if korrekturVon else "") + " (ersetzt den Eintrag mit demselben Datum)")
             # GDT-Datei exportieren
             if not praxis.gdtSpeichern(gd, praxis.rueckschriebPfad(self.gdtExportVerzeichnis, self.kuerzelpraxisedv + self.kuerzelscoregdt, self.rueckschriebMitZeitstempel), self.zeichensatz):
                 logger.logger.error("Fehler bei GDT-Dateiexport nach " + self.gdtExportVerzeichnis + "/" + self.kuerzelpraxisedv + self.kuerzelscoregdt + ".gdt")
@@ -1947,7 +2013,8 @@ class MainWindow(QMainWindow):
                 # trends.xml aktualisieren
                 if self.trendverzeichnis != "" and os.path.exists(self.trendverzeichnis):
                     test = class_trends.Test(str(self.scoreRoot.get("name")), str(self.scoreRoot.get("gruppe")), class_trends.GdtTool.SCOREGDT) # type: ignore
-                    trend = class_trends.Trend(datetime.datetime(self.untersuchungsdatum.year(), self.untersuchungsdatum.month(), self.untersuchungsdatum.day(), datetime.datetime.now().hour, datetime.datetime.now().minute, datetime.datetime.now().second), self.lineEditScoreErgebnis.text() + leerzeichenVorEinheit + self.labelScoreErgebnisEinheit.text(), auswertung)
+                    # Praxis: gleicher Zeitpunkt wie im Rückschrieb (6200/6201), damit Eintrag, Verlauf und Bogen zusammenpassen
+                    trend = class_trends.Trend(datetime.datetime.strptime(untersuchungsdatum + uhrzeit, "%d%m%Y%H%M%S"), self.lineEditScoreErgebnis.text() + leerzeichenVorEinheit + self.labelScoreErgebnisEinheit.text(), auswertung)
                     if not os.path.exists(os.path.join(self.trendverzeichnis, self.patId)):
                         os.mkdir(self.trendverzeichnis + os.path.sep + self.patId, 0o777)
                         logger.logger.info("Trendverzeichnis für PatId " + self.patId + " erstellt")
@@ -1961,6 +2028,27 @@ class MainWindow(QMainWindow):
                     except class_trends.TrendError as e:
                         mb = QMessageBox(QMessageBox.Icon.Warning, "Hinweis von ScoreGDT", "Fehler beim Aktualisieren/Speichern der Trenddaten: " + e.message, QMessageBox.StandardButton.Ok)
                         mb.exec()
+                    # Praxis: ausgefüllten Bogen speichern (Doppelklick in medatixx öffnet ihn wieder)
+                    try:
+                        bogenDaten = praxis_boegen.zustandLesen(self.widgets, self.einheitToggles)
+                        bogenDaten.update({
+                            "schluessel": praxis_boegen.schluessel(untersuchungsdatum, uhrzeit),
+                            "score": str(self.scoreRoot.get("name")), # type: ignore
+                            "datum": untersuchungsdatum, "uhrzeit": uhrzeit,
+                            "kuerzel": self.benutzerkuerzelListe[self.aktuelleBenutzernummer] if self.aktuelleBenutzernummer < len(self.benutzerkuerzelListe) else "",
+                            "name": self.benutzernamenListe[self.aktuelleBenutzernummer] if self.aktuelleBenutzernummer < len(self.benutzernamenListe) else "",
+                            "ergebnis": self.lineEditScoreErgebnis.text() + leerzeichenVorEinheit + self.labelScoreErgebnisEinheit.text(),
+                            "beurteilung": auswertung if self.erfuellteAuswertungsregel != -1 else "",
+                            "kommentar": self.lineEditKommentar.text(),
+                            "pdf": self.pdferzeugen,
+                            "gesendet": datetime.datetime.now().isoformat(timespec="seconds"),
+                            "programm": "ScoreGDT " + self.version,
+                        })
+                        if bogen:
+                            bogenDaten["korrekturVon"] = korrekturVon
+                        praxis_boegen.speichern(self.trendverzeichnis, self.patId, bogenDaten)
+                    except Exception as e:
+                        logger.logger.error("Bogen konnte nicht gespeichert werden: " + str(e))
                 elif self.trendverzeichnis != "" and not os.path.exists(self.trendverzeichnis):
                     logger.logger.warning("Trendverzeichnis " + self.trendverzeichnis + " nicht erreichbar")
                 sys.exit()

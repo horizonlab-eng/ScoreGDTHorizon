@@ -208,6 +208,58 @@ os.remove(praxis_vorlage.vorlagePfad("verlauf"))
 d2.anzeigeAktualisieren()
 pruefe(not d2.vorlageKnoepfe["verlauf"]["probe"].isEnabled(), "PDF-Dialog: ohne Vorlage sind Probe/Bearbeiten aus")
 
+# --- Gespeicherte Bögen (Doppelklick in medatixx = "Untersuchung zeigen") ---
+import praxis_boegen, class_widgets
+pruefe(praxis_boegen.schluessel("02112026", "134426") == "20261102134426", "Bogen: Schlüssel aus 6200/6201")
+pruefe(praxis_boegen.schluessel("", "134426") == "", "Bogen: ohne Datum kein Schlüssel")
+
+def testFenster():
+    class F: pass
+    f = F()
+    f.widgets = [
+        class_widgets.LineEdit("w1", "p1", "Alter", "", "Jahre", r"^\d+$", False, "", False, False),
+        class_widgets.ComboBox("w2", "p1", "Mobilität", "", "", [("selbstständig", "0"), ("mit Hilfe", "1"), ("bettlägerig", "2")], 0, False, False, False),
+        class_widgets.CheckBox("w3", "p1", "", "Sturz im letzten Jahr", "", "", "1", False, False, "", False, False, False),
+        class_widgets.RadioButton("w4", "p2", "Ja", "", "", "1", False, False, "", False, False),
+    ]
+    f.einheitToggles = {}
+    f.konvertButtonClicked = lambda checked, wid: None
+    return f
+
+trendDir = os.path.join(cfg, "trends")
+os.makedirs(trendDir)
+f1 = testFenster()
+f1.widgets[0].getQt().setText("84")
+f1.widgets[1].getQt().setCurrentIndex(2)
+f1.widgets[2].getQt().setChecked(True)
+f1.widgets[3].getQt().setChecked(True)
+z1 = praxis_boegen.zustandLesen(f1.widgets, f1.einheitToggles)
+daten = dict(z1)
+daten.update({"schluessel": "20261102134426", "score": "Testscore", "datum": "02112026", "uhrzeit": "134426", "kuerzel": "SH", "name": "Sabine Muster", "kommentar": "Hallo äöü"})
+pfad = praxis_boegen.speichern(trendDir, "21879", daten)
+pruefe(os.path.exists(pfad) and pfad.endswith(os.path.join("21879", "boegen", "20261102134426.json")), "Bogen: im Trendverzeichnis des Patienten gespeichert")
+g = praxis_boegen.finden(trendDir, "21879", "02112026", "134426")
+pruefe(g.get("score") == "Testscore" and g.get("kuerzel") == "SH" and g.get("kommentar") == "Hallo äöü", "Bogen: exakt wiedergefunden (mit Ersteller und Kommentar)")
+pruefe(praxis_boegen.finden(trendDir, "21879", "02112026", "134431").get("score") == "Testscore", "Bogen: wenige Sekunden Abweichung werden toleriert")
+pruefe(praxis_boegen.finden(trendDir, "21879", "02112026", "150000") == {}, "Bogen: anderer Eintrag am selben Tag wird nicht verwechselt")
+pruefe(praxis_boegen.finden(trendDir, "99999", "02112026", "134426") == {}, "Bogen: anderer Patient findet nichts")
+f2 = testFenster()
+fehlend = praxis_boegen.zustandSetzen(f2, g)
+z2 = praxis_boegen.zustandLesen(f2.widgets, f2.einheitToggles)
+pruefe(fehlend == [] and praxis_boegen.gleich(z1, z2), "Bogen: alle Antworten wiederhergestellt")
+pruefe(f2.widgets[0].getQt().text() == "84" and f2.widgets[1].getQt().currentIndex() == 2 and f2.widgets[2].getQt().isChecked() and f2.widgets[3].getQt().isChecked(), "Bogen: Text, Auswahl, Haken und Optionsfeld stimmen")
+f2.widgets[1].getQt().setCurrentIndex(1)
+pruefe(not praxis_boegen.gleich(z1, praxis_boegen.zustandLesen(f2.widgets, f2.einheitToggles)), "Bogen: Änderung wird erkannt")
+pruefe(not praxis_boegen.gleich(dict(z1, kommentar="a"), dict(z1, kommentar="b")), "Bogen: geänderter Kommentar wird erkannt")
+korr = praxis_boegen.zustandLesen(f2.widgets, f2.einheitToggles)
+korr.update({"schluessel": "20261102134426", "score": "Testscore", "datum": "02112026", "uhrzeit": "134426", "kuerzel": "SH", "name": "Sabine Muster", "korrekturVon": "BO"})
+praxis_boegen.speichern(trendDir, "21879", korr)
+g2 = praxis_boegen.finden(trendDir, "21879", "02112026", "134426")
+pruefe(g2.get("korrekturVon") == "BO" and g2["widgets"]["w2"]["wert"] == 1 and len(g2.get("fruehereFassungen", [])) == 1 and g2["fruehereFassungen"][0]["widgets"]["w2"]["wert"] == 2, "Bogen: Korrektur gespeichert, frühere Fassung bleibt erhalten")
+f3 = testFenster()
+weg = dict(g); weg["widgets"] = dict(g["widgets"]); weg["widgets"]["altesFeld"] = {"typ": "text", "wert": "x"}
+pruefe(praxis_boegen.zustandSetzen(f3, weg) == ["altesFeld"], "Bogen: Felder, die es im Score nicht mehr gibt, werden gemeldet")
+
 # --- Hintergrundbetrieb: Bausteine vorhanden ---
 pruefe(hintergrund.pipeName().startswith("ScoreGDT-"), "Hintergrund: Pipe-Name pro Sitzung")
 pruefe(callable(getattr(praxis, "gdtSpeichern", None)), "Praxis-Hilfsfunktionen vorhanden")
